@@ -37,13 +37,13 @@ public:
     if (LineageState::lineage_store[table_name].size()) return;
 
     if (LineageState::debug) {
-      std::cout << "[DEBUG] persist lineage " <<  table_name << " " << lineage.size()
-        << " " << lineage_right.size() << " " << EnumUtil::ToChars<LogicalOperatorType>(this->dependent_type) << std::endl;
+      std::cout << "[DEBUG] persist lineage qid_opid:" <<  table_name << ", left len: " << lineage.size()
+        << ", right len: " << lineage_right.size() << ", type: " << EnumUtil::ToChars<LogicalOperatorType>(this->dependent_type) << std::endl;
     }
 
     LineageState::lineage_types[table_name] = dependent_type;
     LineageState::lineage_store[table_name] = std::move(lineage);
-    if (source_count == 2) {
+    if (source_count == 2 || join_type=="RIGHT_SEMI" || join_type=="RIGHT") {
       LineageState::lineage_store[table_name+"_right"] = std::move(lineage_right);
     }
 
@@ -76,11 +76,12 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
     auto &state = state_p.Cast<PhysicalLineageState>();
     state.n_input += input.size();
     if (LineageState::debug) {
-      std::cout << "[PhysicalLineageOperator] join_type:" <<  join_type << ", source_count: " << source_count 
+      std::cout << "[PhysicalLineageOperator] opid: " << operator_id << " join_type:" <<  join_type << ", source_count: " << source_count 
       << ", left_rid: " << left_rid << ", right_rid:" << right_rid << ", dependent_type: " << 
        EnumUtil::ToChars<LogicalOperatorType>(this->dependent_type) << std::endl;
       std::cout << input.ColumnCount() << std::endl;
       for (auto &type : input.GetTypes()) { std::cout << type.ToString() << " "; }
+      for (auto &type : chunk.GetTypes()) { std::cout << type.ToString() << " "; }
       std::cout << "\n -------" << std::endl;
     }
     if (left_rid == 0 && right_rid > 0) { // right semi join
@@ -109,6 +110,13 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
       chunk.data[i].Reference(input.data[i]);
     }
     
+    if (join_type == "MARK") {
+      // pass annotations to parent since it is single annotations
+      chunk.data.back().Reference(input.data[left_rid]);
+      chunk.data[left_rid].Reference(input.data.back());
+      return OperatorResultType::NEED_MORE_INPUT;
+    }
+    
     for (idx_t i = left_rid+1; i < left_rid+right_rid+1; i++) {
       chunk.data[i-1].Reference(input.data[i]);
     }
@@ -121,7 +129,7 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
       state.lineage.push_back({annotations, input.size()});
     }
 
-    if ((this->source_count == 2) && LineageState::persist) {
+    if ((this->source_count == 2 || join_type=="RIGHT_SEMI" || join_type=="RIGHT") && LineageState::persist) {
       // Extract annotations payload from the right input
       idx_t annotation_col = input.ColumnCount() - 1;
       Vector annotations(input.data[annotation_col].GetType());

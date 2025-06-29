@@ -11,23 +11,23 @@ void LineageScanFunction::LineageScanImplementation(ClientContext &context, Tabl
   auto &data = data_p.local_state->Cast<LineageReadLocalState>();
   auto &gstate = data_p.global_state->Cast<LineageReadGlobalState>();
   auto &bind_data = data_p.bind_data->CastNoConst<LineageReadBindData>();
-  std::cout << "LineageScanImplementation: " << bind_data.operator_id << " " << bind_data.query_id << std::endl;
   
   idx_t total_chunks = LineageState::lineage_store[bind_data.table_name].size();
   if (bind_data.chunk_count >= total_chunks) {
     return;
   }
-  output.data[0].Reference(LineageState::lineage_store[bind_data.table_name][bind_data.chunk_count].first);
   idx_t count = LineageState::lineage_store[bind_data.table_name][bind_data.chunk_count].second;
+  output.data[0].Sequence(bind_data.offset, 1, count);
+  output.data[1].Reference(LineageState::lineage_store[bind_data.table_name][bind_data.chunk_count].first);
   output.SetCardinality(count);
   bind_data.chunk_count++;
+  bind_data.offset += count;
 }
 
 unique_ptr<FunctionData> LineageScanFunction::LineageScanBind(ClientContext &context, TableFunctionBindInput &input,
                                                 vector<LogicalType> &return_types, vector<string> &names) {
 
   auto result = make_uniq<LineageReadBindData>();
-  result->Initialize();
 
   if (input.inputs[0].IsNull()) {
     throw BinderException("lineage_scan first parameter cannot be NULL");
@@ -35,20 +35,22 @@ unique_ptr<FunctionData> LineageScanFunction::LineageScanBind(ClientContext &con
 
   result->query_id = input.inputs[0].GetValue<int>();
   result->operator_id = input.inputs[1].GetValue<int>();
+  result->source_id = input.inputs[2].GetValue<int>();
   result->table_name = to_string(result->query_id) + "_" + to_string(result->operator_id);
-  std::cout << "Result: " << result->table_name << std::endl;
+
+  return_types.emplace_back(LogicalType::ROW_TYPE);
+  names.emplace_back("out_rowid");
 
   if (LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
     return_types.emplace_back(LogicalType::ROW_TYPE);
-    names.emplace_back("rowid_0");
-    return_types.emplace_back(LogicalType::ROW_TYPE);
-    names.emplace_back("rowid_1");
+    names.emplace_back("in_rowid");
+    if (result->source_id > 0) result->table_name+="_right";
   } else if (LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
     return_types.emplace_back(LogicalType::LIST(LogicalType::ROW_TYPE));
-    names.emplace_back("rowid");
+    names.emplace_back("in_rowid");
   } else {
     return_types.emplace_back(LogicalType::ROW_TYPE);
-    names.emplace_back("rowid");
+    names.emplace_back("in_rowid");
   }
   return std::move(result);
 }
@@ -103,7 +105,7 @@ unique_ptr<BaseStatistics> LineageScanFunction::ScanStats(ClientContext &context
 TableFunctionSet LineageScanFunction::GetFunctionSet() {
   // query_id, operator_id
   TableFunction table_function("lineage_scan", {LogicalType::INTEGER,
-      LogicalType::INTEGER}, LineageScanImplementation,
+      LogicalType::INTEGER, LogicalType::INTEGER}, LineageScanImplementation,
       LineageScanBind, LineageScanInitGlobal, LineageScanInitLocal);
 
   table_function.statistics = ScanStats;

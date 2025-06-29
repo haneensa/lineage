@@ -5,13 +5,7 @@
 namespace duckdb {
 
 struct LineageMetaBindData : public TableFunctionData {
-  idx_t cardinality;
-  idx_t chunk_count;
-
-  void Initialize() {
-    cardinality = 0;
-    chunk_count = 0;
-  }
+  idx_t offset = 0;
 };
 
 class LineageMetaFunction {

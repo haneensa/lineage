@@ -4,7 +4,6 @@
 
 #include "lineage/lineage_init.hpp"
 #include "lineage/physical_lineage_operator.hpp"
-#include "lineage/physical_caching_operator.hpp"
 
 #include "duckdb/execution/operator/join/physical_delim_join.hpp"
 #include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
@@ -13,6 +12,7 @@
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -23,8 +23,9 @@ LogicalLineageOperator::LogicalLineageOperator(idx_t estimated_cardinality,
   source_count(source_count), dependent_type(dependent_type), is_root(is_root),
   left_rid(left_rid), right_rid(right_rid),  mark_join(false) {
   this->estimated_cardinality = estimated_cardinality; 
+  LineageState::qid_plans[query_id][operator_id]->has_lineage = true;
   if (LineageState::debug)
-    std::cout << "LogicalLineageOperator with child type:" << EnumUtil::ToChars<LogicalOperatorType>(dependent_type) << "\n";
+    std::cout << "Add LogicalLineageOperator with child type:" << EnumUtil::ToChars<LogicalOperatorType>(dependent_type) << "\n";
 }
 
 void LogicalLineageOperator::ResolveTypes()  {
@@ -140,111 +141,45 @@ vector<ColumnBinding> LogicalLineageOperator::GetColumnBindings() {
   return child_bindings;
 }
 
-// TODO: support distinct yet.
-void get_agg_info(unique_ptr<AggInfo>& info, vector<unique_ptr<Expression>>& aggs, vector<LogicalType>& payload_types) {
-  if (LineageState::debug) std::cout << "get_agg_info: " << info->n_groups_attr << " " << aggs.size() << std::endl;
-  int include_count = false;
-  idx_t count_idx = aggs.size();
-  // -1 excluding the lineage capture function
-  for (idx_t i=0;  i < aggs.size()-1; ++i) {
-    auto &agg_expr = aggs[i]->Cast<BoundAggregateExpression>();
-    string name = agg_expr.function.name;
-    if (LineageState::debug) std::cout << i << " agg: " << name << std::endl;
-		if (include_count == false && (name == "count" || name == "count_star")) {
-			include_count = true;
-      count_idx = i;
-			continue;
-		} else if (name == "avg") {
-			include_count = true;
-		}
-		
-    if (name == "sum_no_overflow") name = "sum";
-		
-    if (name == "sum" || name == "avg" || name == "stddev") {
-      D_ASSERT(agg_expr.children.size() > 1);
-      D_ASSERT(agg_expr.children[0]->type == ExpressionType::BOUND_REF);
-      auto &bound_ref_expr = agg_expr.children[0]->Cast<BoundReferenceExpression>();
-			int col_idx = bound_ref_expr.index; 
-      LogicalType ret_typ = LogicalType::FLOAT;
-      LogicalType default_typ = LogicalType::FLOAT;
-      if (payload_types[col_idx] == LogicalType::INTEGER ||
-          payload_types[col_idx] == LogicalType::BIGINT) {
-           default_typ = LogicalType::INTEGER;
-           ret_typ = LogicalType::INTEGER;
-      }
-      info->payload_data.push_back({col_idx, default_typ});
-
-      string sum_func_key = "sum_" + to_string(i);
-      vector<string> sub_aggs_list = {sum_func_key};
-      info->sub_aggs[sum_func_key] = make_uniq<SubAggsContext>("sum", default_typ, col_idx, i);
-
-      if (name == "stddev") {
-        string sum_2_func_key = "sum_2_" + to_string(i);
-        info->sub_aggs[sum_2_func_key] = make_uniq<SubAggsContext>("sum_2", LogicalType::FLOAT, col_idx, i);
-        sub_aggs_list.push_back(sum_2_func_key);
-        ret_typ = LogicalType::FLOAT;
-      }
-      if (name == "avg" || name == "stddev") {
-        sub_aggs_list.push_back("count");
-        include_count = true;
-        ret_typ = LogicalType::FLOAT;
-      }
-      info->aggs[i] = make_uniq<AggFuncContext>(name, ret_typ, std::move(sub_aggs_list));
-    }
-  }
-
-  if (include_count) {
-    info->sub_aggs["count"] = make_uniq<SubAggsContext>("count", LogicalType::INTEGER, 0, 0);
-    vector<string> sub_aggs_list = {"count"};
-    info->aggs[count_idx] = make_uniq<AggFuncContext>("count", LogicalType::INTEGER,
-                                              std::move(sub_aggs_list));
-  }
-  
-  // TODO: check if this has another child aggregate. set: has_agg_child and child_agg_id
-}
 
 
 PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) {
   // Get a plan for our child using the public API
   bool debug = false;
   string join_type = "";
-  if (this->dependent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
+  if (this->dependent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN
+       || this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
       auto& join = children[0]->Cast<LogicalJoin>();
       join_type = EnumUtil::ToChars<JoinType>(join.join_type);
   }
   
-  if (this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-    auto agg_info = make_uniq<AggInfo>();
-    agg_info->n_groups_attr = children[0]->Cast<LogicalAggregate>().groups.size();
-    LineageState::qid_plans[query_id][operator_id]->agg_info = std::move(agg_info);
-  }
-
   auto &child = generator.CreatePlan(*children[0]);
+  if (this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+    // this has distinct and join we need to modify
+    auto& delim = child.Cast<PhysicalDelimJoin>();
+    auto last_col = delim.children.back().get().types.size()-1;
+    auto &catalog = Catalog::GetSystemCatalog(context);
+    auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(
+        context, DEFAULT_SCHEMA, "list");
+    auto list_function = entry.functions.GetFunctionByArguments(context, {LogicalType::ROW_TYPE});
+    auto rowid_colref = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::ROW_TYPE, last_col);
+    vector<unique_ptr<Expression>> children;
+    children.push_back(std::move(rowid_colref));
+    unique_ptr<FunctionData> bind_info = list_function.bind(context, list_function, children);
+    auto list_aggregate = make_uniq<BoundAggregateExpression>(list_function, std::move(children), nullptr,
+        std::move(bind_info), AggregateType::NON_DISTINCT);
+    auto& agg = delim.distinct.Cast<PhysicalHashAggregate>();
+    agg.grouped_aggregate_data.aggregates.push_back(std::move(list_aggregate));
+    agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
+    // TODO: figure out how to update it instead of creating new one
+    //auto &distinct = generator.Make<PhysicalHashAggregate>(context, agg.types, std::move(agg.grouped_aggregate_data.aggregates),
+	  //                                                     std::move(agg.grouped_aggregate_data.groups), agg.estimated_cardinality);
+    //delim.distinct = distinct;
+    if (LineageState::debug) std::cout << delim.distinct.ToString() << std::endl;
+  }
   if (LineageState::debug) {
     std::cout << "[DEBUG] LogicalLineageOperator::CreatePlan. " << std::endl;
     std::cout << child.ToString() << std::endl;
-  }
-
-  if (this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-    auto &agg_info = LineageState::qid_plans[query_id][operator_id]->agg_info;
-    auto agg_types = child.children[0].get().GetTypes();
-	  if (child.type == PhysicalOperatorType::HASH_GROUP_BY) {
-			PhysicalHashAggregate * gb = dynamic_cast<PhysicalHashAggregate *>(&child);
-			auto &aggregates = gb->grouped_aggregate_data.aggregates;
-      get_agg_info(agg_info, aggregates, agg_types);
-    } else if (child.type == PhysicalOperatorType::PERFECT_HASH_GROUP_BY) {
-			PhysicalPerfectHashAggregate * gb = dynamic_cast<PhysicalPerfectHashAggregate *>(&child);
-      auto &aggregates = gb->aggregates;
-      get_agg_info(agg_info, aggregates, agg_types);
-    } else {
-      PhysicalUngroupedAggregate * gb = dynamic_cast<PhysicalUngroupedAggregate *>(&child);
-			auto &aggregates = gb->aggregates;
-      get_agg_info(agg_info, aggregates, agg_types);
-    }
-    // Replace agg child with caching op
-    auto agg_child = child.children[0];
-    child.children[0] = generator.Make<PhysicalCachingOperator>(agg_types, agg_child, operator_id, query_id);
-
   }
 
   return generator.Make<PhysicalLineageOperator>(types, child, operator_id, query_id, dependent_type,

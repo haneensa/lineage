@@ -11,18 +11,12 @@
 namespace duckdb {
 
 struct LineageReadBindData : public TableFunctionData {
-  idx_t cardinality;
-  idx_t chunk_count;
+  idx_t source_id = 0;
+  idx_t offset = 0;
+  idx_t chunk_count = 0;
+  idx_t query_id = -1;
+  int operator_id = -1;
   string table_name;
-  idx_t query_id;
-  int operator_id;
-
-  void Initialize() {
-    cardinality = 0;
-    chunk_count = 0;
-    operator_id = -1;
-    query_id = -1;
-  }
 };
 
 struct LineageReadLocalState : public LocalTableFunctionState {
