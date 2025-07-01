@@ -31,6 +31,11 @@ LogicalLineageOperator::LogicalLineageOperator(idx_t estimated_cardinality,
 void LogicalLineageOperator::ResolveTypes()  {
   if (children.empty()) return;
   types = children[0]->types; // Copy types from child and log them
+  if (LineageState::debug) {
+    std::cout << "Resolve Types (child[0]): " << this->operator_id << " " <<  EnumUtil::ToChars<LogicalOperatorType>(dependent_type) << "\n";
+    for (auto &type : types) { std::cout << type.ToString() << " ";}
+     std::cout << "\n";
+  }
   if (this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_GET) { 
     types.pop_back();
     types.push_back(LogicalType::ROW_TYPE);
@@ -39,11 +44,6 @@ void LogicalLineageOperator::ResolveTypes()  {
   if (this->dependent_type == LogicalOperatorType::LOGICAL_CHUNK_GET) { 
     types.push_back(LogicalType::ROW_TYPE);
     return;
-  }
-  if (LineageState::debug) {
-    std::cout << "Resolve Types (child[0]): " << this->operator_id << " " <<  EnumUtil::ToChars<LogicalOperatorType>(dependent_type) << "\n";
-    for (auto &type : types) { std::cout << type.ToString() << " ";}
-     std::cout << "\n";
   }
   if (mark_join) {
     // if mark join, then need to move the end of the left child to the last column
@@ -171,11 +171,14 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
     auto& agg = delim.distinct.Cast<PhysicalHashAggregate>();
     agg.grouped_aggregate_data.aggregates.push_back(std::move(list_aggregate));
     agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
-    // TODO: figure out how to update it instead of creating new one
-    //auto &distinct = generator.Make<PhysicalHashAggregate>(context, agg.types, std::move(agg.grouped_aggregate_data.aggregates),
-	  //                                                     std::move(agg.grouped_aggregate_data.groups), agg.estimated_cardinality);
-    //delim.distinct = distinct;
-    if (LineageState::debug) std::cout << delim.distinct.ToString() << std::endl;
+    vector<unsafe_vector<idx_t>> grouping_functions;
+    delim.distinct.grouped_aggregate_data.InitializeGroupby(std::move(agg.grouped_aggregate_data.groups),
+                                             std::move(agg.grouped_aggregate_data.aggregates),
+                                             std::move(grouping_functions));
+    delim.distinct.non_distinct_filter.push_back(0);
+    //if (LineageState::debug) 
+    std::cout << delim.distinct.ToString() << std::endl;
+    //LineageState::qid_plans[query_id][operator_id]->source_id;
   }
   if (LineageState::debug) {
     std::cout << "[DEBUG] LogicalLineageOperator::CreatePlan. " << std::endl;

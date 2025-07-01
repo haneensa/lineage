@@ -129,7 +129,7 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
       state.lineage.push_back({annotations, input.size()});
     }
 
-    if ((this->source_count == 2 || join_type=="RIGHT_SEMI" || join_type=="RIGHT") && LineageState::persist) {
+    if (this->source_count == 2 && LineageState::persist) {
       // Extract annotations payload from the right input
       idx_t annotation_col = input.ColumnCount() - 1;
       Vector annotations(input.data[annotation_col].GetType());
