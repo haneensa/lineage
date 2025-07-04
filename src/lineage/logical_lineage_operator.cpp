@@ -155,8 +155,21 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
   
   auto &child = generator.CreatePlan(*children[0]);
   if (this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+    // LOGICAL_DELIM_JOIN is not used if it doesn't have any 
     // this has distinct and join we need to modify
-    auto& delim = child.Cast<PhysicalDelimJoin>();
+    auto& delim = child.Cast<PhysicalDelimJoin>(); // NOT TRUE ALL THE TIME, LOGICAL DELIM
+                                                   // COULD SWITCH TO NORMAL JOIN. TODO: verify
+    // this only wraps a regular join where one of its inputs is duplicate
+    // eliminated using distinct
+    if (LineageState::debug) {
+      std::cout << "#################" << std::endl;
+      std::cout << delim.ToString() << std::endl;
+      std::cout << "#################" << std::endl;
+      std::cout << delim.children.back().get().ToString() << std::endl;
+    }
+
+    // right or left delim join, both place the duplicate eliminated child as the last one
+    // we maintain the guarantee that the last column is an annotation column
     auto last_col = delim.children.back().get().types.size()-1;
     auto &catalog = Catalog::GetSystemCatalog(context);
     auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(
@@ -169,21 +182,31 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
     auto list_aggregate = make_uniq<BoundAggregateExpression>(list_function, std::move(children), nullptr,
         std::move(bind_info), AggregateType::NON_DISTINCT);
     auto& agg = delim.distinct.Cast<PhysicalHashAggregate>();
+
     agg.grouped_aggregate_data.aggregates.push_back(std::move(list_aggregate));
     agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
+
     vector<unsafe_vector<idx_t>> grouping_functions;
     delim.distinct.grouped_aggregate_data.InitializeGroupby(std::move(agg.grouped_aggregate_data.groups),
                                              std::move(agg.grouped_aggregate_data.aggregates),
                                              std::move(grouping_functions));
     delim.distinct.non_distinct_filter.push_back(0);
-    //if (LineageState::debug) 
-    std::cout << delim.distinct.ToString() << std::endl;
-    //LineageState::qid_plans[query_id][operator_id]->source_id;
+	  delim.distinct.distinct_collection_info = DistinctAggregateCollectionInfo::Create(delim.distinct.grouped_aggregate_data.aggregates);
+    delim.distinct.groupings.clear();
+    for (idx_t i = 0; i < delim.distinct.grouping_sets.size(); i++) {
+      delim.distinct.groupings.emplace_back(delim.distinct.grouping_sets[i],
+          delim.distinct.grouped_aggregate_data, delim.distinct.distinct_collection_info);
+    }
+    
+    if (LineageState::debug) { std::cout << delim.distinct.ToString() << std::endl; }
   }
   if (LineageState::debug) {
     std::cout << "[DEBUG] LogicalLineageOperator::CreatePlan. " << std::endl;
     std::cout << child.ToString() << std::endl;
   }
+  
+  string table_name = to_string(query_id) + "_" + to_string(operator_id);
+  LineageState::lineage_types[table_name] = dependent_type;
 
   return generator.Make<PhysicalLineageOperator>(types, child, operator_id, query_id, dependent_type,
       source_count, left_rid, right_rid, is_root, join_type);

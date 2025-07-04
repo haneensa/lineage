@@ -50,7 +50,8 @@ void get_per_op_lineage_query(idx_t qid, idx_t root, vector<string>& queries) {
   if (lop->has_lineage) {
     int opid = root;
     string name = EnumUtil::ToChars<LogicalOperatorType>(lop->type);
-    bool needs_unnest = lop->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY;
+    bool needs_unnest = lop->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY
+                        || lop->type == LogicalOperatorType::LOGICAL_DELIM_GET;
     string sink_table = lop->table_name.empty() ? name : lop->table_name;
     int sink_opid = lop->sink_id;
     int src_opid = lop->source_id[0];

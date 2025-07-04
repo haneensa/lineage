@@ -140,7 +140,11 @@ idx_t AnnotatePlan(unique_ptr<LogicalOperator> &op, idx_t query_id, idx_t& ref_o
       lop->table_name = table_name;
       lop->columns = get.names;
     }
+  } else if (op->type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+    auto &join = op->Cast<LogicalComparisonJoin>();
+    lop->delim_flipped = join.delim_flipped;
   }
+
   
   LineageState::qid_plans[query_id][opid] =  std::move(lop);
   pointer_to_opid[(void*)op.get()] = opid;
@@ -154,18 +158,60 @@ idx_t find_first_opid_with_lineage_or_leaf(idx_t query_id, idx_t opid) {
   return find_first_opid_with_lineage_or_leaf(query_id, lop->children[0]);
 }
 
+// both the join and distinct take the same input (right delim dedup the right child, left the left child)
+// RIGHT DELIM JOIN: join.children[1] -> delim.children[0] -> distinct
+// delim.children[0] -> join.children[1]
+// LEFT DELIM JOIN: join.children[0] -> delim.children[0] -> distinct
+// join.children[0] -> ColumnDataScan -> join.children[0]
+// 1) access to distinct to add LIST(rowid) expression
+// 2) JOIN to add annotations from both sides
+void LinkParentDelimGets(idx_t query_id, idx_t opid, idx_t source_id) {
+  // find delim_get, set its source_id to join.children[1]
+  // set delim_get source_id to join.children[0]
+  auto &lop = LineageState::qid_plans[query_id][opid];
+  
+  if (lop->type == LogicalOperatorType::LOGICAL_DELIM_GET) {
+   std::cout << "get delim get children " << opid << " " << source_id << std::endl;
+    lop->source_id.push_back(source_id);
+  }
+
+  for (idx_t i=0; i < lop->children.size(); ++i) {
+    idx_t child = lop->children[i];
+    LinkParentDelimGets(query_id, child, source_id);
+  }
+}
+
 void PostAnnotate(idx_t query_id, idx_t root, int &sink_id) {
   auto &lop = LineageState::qid_plans[query_id][root];
 
   vector<int> parents;
   if (lop->has_lineage) {
+    if (lop->type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
+      std::cout << "get delim get children" << std::endl;
+      std::cout << "######## " << lop->delim_flipped << "######### " << std::endl;
+      idx_t delim_scan_idx = lop->delim_flipped ? 1 : 0;
+      idx_t src_id = find_first_opid_with_lineage_or_leaf(query_id, lop->children[delim_scan_idx]);
+      idx_t delim_get_idx = lop->delim_flipped ? 0 : 1;
+      LinkParentDelimGets(query_id, lop->children[delim_get_idx], src_id);
+    }
+
     if (lop->children.empty() == false) {
       idx_t src_id = find_first_opid_with_lineage_or_leaf(query_id, lop->children[0]);
       lop->source_id.push_back(src_id);
     } else { 
-      lop->source_id.push_back(root);
+      // 1) if DELIM GET -> parent is distinct of DEILM JOIN
+      if (lop->type != LogicalOperatorType::LOGICAL_DELIM_GET) {
+        lop->source_id.push_back(root);
+      }
     }
+    // TODO: if right semi join or mark, then it is pipelined (no lineage materialized)
+    //       find the first ancestor with has_lineage
     lop->sink_id = sink_id;
+    
+    // TODO: remove LM for pipelined ops
+    //bool is_pipelined = lop->join_type == JoinType::RIGHT_SEMI || lop->join_type == JoinType::RIGHT_ANTI;
+    //if (is_pipelined) {
+    //  parents.push_back(sink_id);
     parents.push_back(lop->source_id[0]);
 
     if (lop->children.size() > 1) {
@@ -187,6 +233,7 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
   vector<idx_t> rowids = {};
 
   idx_t cur_op_id = pointer_to_opid[(void*)op.get()];
+  auto& lop = LineageState::qid_plans[query_id][cur_op_id];
 
   for (auto &child : op->children) {
     rowids.push_back( InjectLineageOperator(child, context,  query_id) );
@@ -199,128 +246,117 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
     std::cout << std::endl;
 
   }
-  if (op->type == LogicalOperatorType::LOGICAL_GET) {
-    // leaf node. add rowid attribute to propagate.
-    auto &get = op->Cast<LogicalGet>();
-    get.AddColumnId(COLUMN_IDENTIFIER_ROW_ID);
-    //LineageState::table_idx = get.table_index;
-    idx_t col_id =  get.GetColumnIds().size() - 1;
-    // projection_ids index into column_ids. if any exist then reference new column
-    if (!get.projection_ids.empty()) {
-      get.projection_ids.push_back(col_id);
-      col_id = get.projection_ids.size() - 1;
-    }
-    return col_id;
-  }  else if (op->type == LogicalOperatorType::LOGICAL_CHUNK_GET) { // CTE_SCAN too
-    // add lineage op to generate ids
-    auto& col = op->Cast<LogicalColumnDataGet>();
-    idx_t col_id = col.chunk_types.size();
-    auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
-        op->type, 1/*src cnt*/, col_id, 0);
-    lop->AddChild(std::move(op));
-    op = std::move(lop);
-    return col_id;
-  }  else if (op->type == LogicalOperatorType::LOGICAL_MATERIALIZED_CTE) { // CTE_SCAN too
+  switch (op->type) {
+    case LogicalOperatorType::LOGICAL_GET: {
+      // leaf node. add rowid attribute to propagate.
+      auto &get = op->Cast<LogicalGet>();
+      get.AddColumnId(COLUMN_IDENTIFIER_ROW_ID);
+      //LineageState::table_idx = get.table_index;
+      idx_t col_id =  get.GetColumnIds().size() - 1;
+      // projection_ids index into column_ids. if any exist then reference new column
+      if (!get.projection_ids.empty()) {
+        get.projection_ids.push_back(col_id);
+        col_id = get.projection_ids.size() - 1;
+      }
+      return col_id;
+    } case LogicalOperatorType::LOGICAL_CHUNK_GET: { // CTE_SCAN too
+      // add lineage op to generate ids
+      auto& col = op->Cast<LogicalColumnDataGet>();
+      idx_t col_id = col.chunk_types.size();
+      auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
+          op->type, 1/*src cnt*/, col_id, 0);
+      lop->AddChild(std::move(op));
+      op = std::move(lop);
+      return col_id;
+    } case LogicalOperatorType::LOGICAL_DELIM_GET: { // duplicate eliminated scan (output of distinct)
+      auto &get = op->Cast<LogicalDelimGet>();
+      if (LineageState::debug)  std::cout << " table_index:" << get.table_index << " len(types): " << get.chunk_types.size() << std::endl;
+      int col_id = get.chunk_types.size();
+      get.chunk_types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
+      auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
+          op->type, 1, col_id, 0);
+      lop->AddChild(std::move(op));
+      op = std::move(lop);
+      return col_id; // TODO: adjust once I adjust distinct types
+    } case LogicalOperatorType::LOGICAL_TOP_N: {
+      return rowids[0];
+    } case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE: { // CTE_SCAN too
       return rowids[1];
-  }  else if (op->type == LogicalOperatorType::LOGICAL_CTE_REF) { // CTE_SCAN too
-    // refrence a recursive CTE. table_index, cte_index, chunk_types, bound_columns
-    // add lineage op to generate ids
-    auto& col = op->Cast<LogicalCTERef>();
-    idx_t col_id = col.chunk_types.size();
-    if (LineageState::debug) std::cout << "[DEBUG] CETRef: " << col_id << " " << col.bound_columns[0] << " " << std::endl;
-    col.chunk_types.push_back(LogicalType::ROW_TYPE);
-    col.bound_columns.push_back("rowid");
-    return col_id;
-  } else if (op->type == LogicalOperatorType::LOGICAL_FILTER) {
-    auto &filter = op->Cast<LogicalFilter>();
-    int col_id = rowids[0];
-    int new_col_id = col_id;
-    if (op->children[0]->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
-        // check if the child is mark join
-        if (op->children[0]->Cast<LogicalLineageOperator>().mark_join) {
-            // pull up lineage op
-            auto lop = std::move(op->children[0]);
-            if (LineageState::debug)
-              std::cout << "pull up lineage op " << rowids[0] << " " 
-            << filter.expressions.size() << " " << filter.projection_map.size() << " " << 
-            lop->Cast<LogicalLineageOperator>().left_rid << std::endl;
-            lop->Cast<LogicalLineageOperator>().dependent_type = op->type;
-      
-            idx_t child_left_rid = lop->Cast<LogicalLineageOperator>().left_rid;
-            if (!filter.projection_map.empty()) {
-              // annotations, but projection_map refer to the extra bool column that we need to adjust
-              // the last column is the boolean
-              filter.projection_map.push_back(child_left_rid);
-              lop->Cast<LogicalLineageOperator>().left_rid = filter.projection_map.size()-1; 
-              new_col_id = filter.projection_map.size()-1; 
-              if (LineageState::debug) {
-              for (idx_t i=0; i < filter.projection_map.size(); i++)
-                std::cout << i << " -> " << filter.projection_map[i] << std::endl;
-
-                std::cout << child_left_rid
-                      << " " << lop->Cast<LogicalLineageOperator>().left_rid
-                      << " " << new_col_id <<  std::endl;
-              }
-            }
-            op->children[0] = std::move(lop->children[0]);
-            lop->children[0] = std::move(op);
-            op = std::move(lop);
-            return new_col_id;
+    } case LogicalOperatorType::LOGICAL_CTE_REF: { // CTE_SCAN too
+      // refrence a recursive CTE. table_index, cte_index, chunk_types, bound_columns
+      // add lineage op to generate ids
+      auto& col = op->Cast<LogicalCTERef>();
+      idx_t col_id = col.chunk_types.size();
+      if (LineageState::debug) std::cout << "[DEBUG] CETRef: " << col_id << " " << col.bound_columns[0] << " " << std::endl;
+      col.chunk_types.push_back(LogicalType::ROW_TYPE);
+      col.bound_columns.push_back("rowid");
+      return col_id;
+    } case LogicalOperatorType::LOGICAL_ORDER_BY: {
+        // it passes through child types. except if projections is not empty, then we need to add it
+        auto &order = op->Cast<LogicalOrder>();
+        if (!order.projection_map.empty()) {
+         // order.projections.push_back(); the rowid of child
         }
-    }
-    if (!filter.projection_map.empty()) {
-        filter.projection_map.push_back(col_id); 
-        new_col_id = filter.projection_map.size()-1; 
-    }
-    if (LineageState::debug)  std::cout << "[DEBUG] Filter " << col_id << " " << new_col_id << std::endl;
-    return new_col_id;
-  } else if (op->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
-    // it passes through child types. except if projections is not empty, then we need to add it
-    auto &order = op->Cast<LogicalOrder>();
-    if (!order.projection_map.empty()) {
-     // order.projections.push_back(); the rowid of child
-    }
-    return rowids[0];
-  } else if (op->type == LogicalOperatorType::LOGICAL_TOP_N) {
-    // passes through child types
-    return rowids[0];
-  } else if (op->type == LogicalOperatorType::LOGICAL_CREATE_TABLE) {
-    if (rowids.size() > 0)  return rowids[0];
-    else return 0;
-  } else if (op->type == LogicalOperatorType::LOGICAL_PROJECTION) {
-    // projection, just make sure we propagate any annotation columns
-    int col_id = rowids[0];
-    op->expressions.push_back(make_uniq<BoundReferenceExpression>(LogicalType::ROW_TYPE, col_id));
-    int new_col_id = op->expressions.size()-1;
-    return new_col_id;
-  } else if (op->type == LogicalOperatorType::LOGICAL_DELIM_GET) {
-    // duplicate eliminated scan (output of distinct)
-    auto &get = op->Cast<LogicalDelimGet>();
-    if (LineageState::debug)
-      std::cout << "LogicalDelimGet types after injection: " << get.table_index << " " << get.chunk_types.size() << std::endl;
-    int col_id = get.chunk_types.size();
-    get.chunk_types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
-    auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
-        op->type, 1, col_id, 0);
-    lop->AddChild(std::move(op));
-    op = std::move(lop);
-    return col_id; // TODO: adjust once I adjust distinct types
-  } else if (op->type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
-    // the JOIN right child, becomes right_delim_join child that is used as input to
-    // JOIN and DISTINCT
-    // 1) access to distinct to add LIST(rowid) expression
-    // 2) JOIN to add annotations from both sides
-    // the fist n childrens are n delim scans
-    return ProcessJoin(op, rowids, query_id, cur_op_id);
-  } else if (op->type == LogicalOperatorType::LOGICAL_ASOF_JOIN) {
-  } else if (op->type == LogicalOperatorType::LOGICAL_CROSS_PRODUCT) {
-  } else if (op->type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
-    // Propagate annotations from the left and right sides.
-    // Add PhysicaLineage to extraxt the last two columns
-    // and replace it with a single annotations column
-    return ProcessJoin(op, rowids, query_id, cur_op_id);
-  } else if (op->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-      // check if there is a filter between this and last lineageop or leaf node
+        return rowids[0];
+    } case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
+      if (rowids.size() > 0)  return rowids[0];
+      else return 0;
+    } case LogicalOperatorType::LOGICAL_PROJECTION: {
+      // projection, just make sure we propagate any annotation columns
+      int col_id = rowids[0];
+      op->expressions.push_back(make_uniq<BoundReferenceExpression>(LogicalType::ROW_TYPE, col_id));
+      int new_col_id = op->expressions.size()-1;
+      return new_col_id;
+    } case LogicalOperatorType::LOGICAL_FILTER: {
+      auto &filter = op->Cast<LogicalFilter>();
+      int col_id = rowids[0];
+      int new_col_id = col_id;
+      if (op->children[0]->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
+          if (op->children[0]->Cast<LogicalLineageOperator>().mark_join) { // pull up lineage op
+              auto lop = std::move(op->children[0]);
+              if (LineageState::debug)
+                std::cout << "pull up lineage op " << rowids[0] << " " 
+              << filter.expressions.size() << " " << filter.projection_map.size() << " " << 
+              lop->Cast<LogicalLineageOperator>().left_rid << std::endl;
+              lop->Cast<LogicalLineageOperator>().dependent_type = op->type;
+              idx_t child_left_rid = lop->Cast<LogicalLineageOperator>().left_rid;
+              if (!filter.projection_map.empty()) {
+                // annotations, but projection_map refer to the extra bool column that we need to adjust
+                // the last column is the boolean
+                filter.projection_map.push_back(child_left_rid);
+                lop->Cast<LogicalLineageOperator>().left_rid = filter.projection_map.size()-1; 
+                new_col_id = filter.projection_map.size()-1; 
+                if (LineageState::debug) {
+                for (idx_t i=0; i < filter.projection_map.size(); i++)
+                  std::cout << i << " -> " << filter.projection_map[i] << std::endl;
+
+                  std::cout << child_left_rid
+                        << " " << lop->Cast<LogicalLineageOperator>().left_rid
+                        << " " << new_col_id <<  std::endl;
+                }
+              }
+              op->children[0] = std::move(lop->children[0]);
+              lop->children[0] = std::move(op);
+              op = std::move(lop);
+              return new_col_id;
+          }
+      }
+      if (!filter.projection_map.empty()) {
+          filter.projection_map.push_back(col_id); 
+          new_col_id = filter.projection_map.size()-1; 
+      }
+      return new_col_id;
+  } case LogicalOperatorType::LOGICAL_DELIM_JOIN:
+    case LogicalOperatorType::LOGICAL_ASOF_JOIN:
+    case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
+    case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
+      // Propagate annotations from the left and right sides.
+      // Add PhysicaLineage to extraxt the last two columns
+      // and replace it with a single annotations column
+      auto &join = op->Cast<LogicalComparisonJoin>();
+      lop->join_type = join.join_type;
+      return ProcessJoin(op, rowids, query_id, cur_op_id);
+  } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
       auto &aggr = op->Cast<LogicalAggregate>();
      // if (!aggr.groups.empty()) {
           auto list_function = GetListFunction(context);
@@ -344,6 +380,7 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
           
           return new_col_id;
     //  } // if simple agg, add operator below to remove annotations, and operator above to generate annotations
+  } default: {}
   }
   return 0;
 }

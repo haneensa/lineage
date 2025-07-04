@@ -45,13 +45,16 @@ unique_ptr<FunctionData> LineageScanFunction::LineageScanBind(ClientContext &con
     return_types.emplace_back(LogicalType::ROW_TYPE);
     names.emplace_back("in_rowid");
     if (result->source_id > 0) result->table_name+="_right";
-  } else if (LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
+  } else if (LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY
+            || LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_DELIM_GET) {
     return_types.emplace_back(LogicalType::LIST(LogicalType::ROW_TYPE));
     names.emplace_back("in_rowid");
   } else {
     return_types.emplace_back(LogicalType::ROW_TYPE);
     names.emplace_back("in_rowid");
   }
+  idx_t partition_id = 0; // todo : update
+  result->table_name = to_string(result->query_id) + "_" + to_string(result->operator_id); // + "_" + to_string(partition_id);
   return std::move(result);
 }
 

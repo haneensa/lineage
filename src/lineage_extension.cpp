@@ -21,6 +21,8 @@ std::unordered_map<string, vector<std::pair<Vector, int>>> LineageState::lineage
 std::unordered_map<string, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
 std::unordered_map<idx_t, idx_t> LineageState::qid_plans_roots;
+std::unordered_map<string, idx_t> LineageState::partitions;
+mutex LineageState::glock;
 
 
 std::string LineageExtension::Name() {

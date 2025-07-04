@@ -7,6 +7,7 @@ import argparse
 parser = argparse.ArgumentParser(description='TPCH benchmarking script')
 parser.add_argument('--sf', type=float, help="sf scale", default=0.1)
 parser.add_argument('--qid', type=int, help="query", default=1)
+parser.add_argument('--workers', type=int, help="threads", default=1)
 parser.add_argument('--debug', type=bool, help="debug", default=False)
 parser.add_argument('--end2end', type=bool, help="end to end lineage", default=False)
 parser.add_argument('--folder', type=str, help='queries folder', default='queries/')
@@ -24,7 +25,7 @@ text_file = open(qfile, "r")
 query = text_file.read().strip()
 query = ' '.join(query.split())
 text_file.close()
-con.execute("PRAGMA threads=1")
+con.execute(f"PRAGMA threads={args.workers}")
 if args.debug:
     con.execute("PRAGMA set_debug_lineage(True)")
 con.execute("PRAGMA set_lineage(True)")
@@ -81,3 +82,5 @@ FROM lineage_e2e WHERE  CAST(source_table AS VARCHAR) NOT LIKE 'LOGICAL_%'
 if args.end2end:
     print(con.execute(end2end_lineage).df())
 con.execute("pragma clear_lineage")
+
+# TODO: add detailed stats per operator n_input, n_output, skew 1:1, 1:n, n:1 (in a list), storage
