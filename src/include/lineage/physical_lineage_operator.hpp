@@ -20,6 +20,7 @@ public:
                              OperatorState &state) const override;
 
     unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;
+    unique_ptr<GlobalOperatorState> GetGlobalOperatorState(ClientContext &context) const override;
 
 
     bool ParallelOperator() const override {

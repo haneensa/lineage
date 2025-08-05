@@ -3,6 +3,7 @@ import ast
 import json
 import duckdb
 import argparse
+from timeit import default_timer as timer
 
 parser = argparse.ArgumentParser(description='TPCH benchmarking script')
 parser.add_argument('--sf', type=float, help="sf scale", default=0.1)
@@ -31,7 +32,18 @@ print(query)
 print(con.execute(query).df())
 con.execute("PRAGMA set_lineage(False)")
 
+start = timer()
 lineage = con.execute("select * from global_lineage()").df()
+end = timer()
+print(end - start)
+
+print(lineage)
+
+start = timer()
+lineage = con.execute("select * from LQ()").df()
+end = timer()
+
+print(end - start)
 print(lineage)
 
 con.execute("pragma clear_lineage")

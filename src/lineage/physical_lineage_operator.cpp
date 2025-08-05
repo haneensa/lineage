@@ -65,11 +65,15 @@ public:
 };
 
 
+unique_ptr<GlobalOperatorState> PhysicalLineageOperator::GetGlobalOperatorState(ClientContext &context) const {
+  return make_uniq<LineageGlobalState>();
+}
+
 unique_ptr<OperatorState> PhysicalLineageOperator::GetOperatorState(ExecutionContext &context) const {
   // set the partition idx for the first decendant lineage operator, then use the same index
-  lock_guard<mutex> lock(LineageState::glock);
   string table_name = to_string(query_id) + "_" + to_string(operator_id);
-  idx_t partition_idx = LineageState::partitions[table_name]++;
+  auto &gstate = op_state->Cast<LineageGlobalState>();
+  idx_t partition_idx = gstate.cur_partition.fetch_add(1);
 	return make_uniq<PhysicalLineageState>(context, query_id, operator_id, dependent_type,
       source_count, join_type, partition_idx);
 }

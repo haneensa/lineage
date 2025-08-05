@@ -7,6 +7,7 @@
 #include "lineage/lineage_meta.hpp"
 #include "lineage/lineage_reader.hpp"
 #include "lineage/lineage_global.hpp"
+#include "lineage/lineage_query.hpp"
 
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
@@ -21,8 +22,6 @@ std::unordered_map<string, vector<std::pair<Vector, int>>> LineageState::lineage
 std::unordered_map<string, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
 std::unordered_map<idx_t, idx_t> LineageState::qid_plans_roots;
-std::unordered_map<string, idx_t> LineageState::partitions;
-mutex LineageState::glock;
 
 
 std::string LineageExtension::Name() {
@@ -85,8 +84,13 @@ void LineageExtension::Load(DuckDB &db) {
 
     TableFunction global_func("global_lineage", {}, LineageGFunction::LineageGImplementation,
         LineageGFunction::LineageGBind, LineageGFunction::LineageGInit);
-
+    
     ExtensionUtil::RegisterFunction(db_instance, global_func);
+    
+    TableFunction lq_func("LQ", {}, LQFunction::LQImplementation,
+        LQFunction::LQBind, LQFunction::LQInit);
+    
+    ExtensionUtil::RegisterFunction(db_instance, lq_func);
 
     // JSON replacement scan
     auto &config = DBConfig::GetConfig(*db.instance);

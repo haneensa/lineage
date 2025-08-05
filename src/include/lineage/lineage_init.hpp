@@ -28,10 +28,8 @@ struct LineageState {
    static bool debug;
    static std::unordered_map<string, LogicalOperatorType> lineage_types;
    static std::unordered_map<string, vector<std::pair<Vector, int>>> lineage_store;
-   static std::unordered_map<string, idx_t> partitions;
    static std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> qid_plans;
    static std::unordered_map<idx_t, idx_t> qid_plans_roots;
-   static mutex glock;
 };
 
 unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,
