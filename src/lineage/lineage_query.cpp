@@ -76,6 +76,7 @@ unique_ptr<FunctionData> LQFunction::LQBind(ClientContext &context, TableFunctio
 
 unique_ptr<GlobalTableFunctionState> LQFunction::LQInit(ClientContext &context,
                                                  TableFunctionInitInput &input) {
+  auto &bind_data = input.bind_data->CastNoConst<LQBindData>();
   // use the latest lineage
   vector<string> queries;
   idx_t last_qid = LineageState::qid_plans_roots.size()-1;
@@ -84,7 +85,7 @@ unique_ptr<GlobalTableFunctionState> LQFunction::LQInit(ClientContext &context,
   // partition_id -> {iids}
   vector<idx_t> oids_per_partition;
   unordered_map<idx_t, vector<shared_ptr<SourceContext>>> out_per_src;
-  oids_per_partition.emplace_back(0);
+  oids_per_partition.emplace_back(bind_data.oid);
   LQ(last_qid, root, oids_per_partition, out_per_src);
   std::cout << "|sources| : " << out_per_src.size() << std::endl;
 

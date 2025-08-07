@@ -9,6 +9,8 @@
 #include "lineage/lineage_global.hpp"
 #include "lineage/lineage_query.hpp"
 
+#include "fade/prov_poly_eval.hpp"
+
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/main/extension_util.hpp"
@@ -19,6 +21,7 @@ bool LineageState::capture = false;
 bool LineageState::debug = false;
 bool LineageState::persist = true;
 std::unordered_map<string, vector<std::pair<Vector, int>>> LineageState::lineage_store;
+std::unordered_map<string, vector<vector<idx_t>>> LineageState::lineage_global_store;
 std::unordered_map<string, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
 std::unordered_map<idx_t, idx_t> LineageState::qid_plans_roots;
@@ -87,11 +90,13 @@ void LineageExtension::Load(DuckDB &db) {
     
     ExtensionUtil::RegisterFunction(db_instance, global_func);
     
-    TableFunction lq_func("LQ", {}, LQFunction::LQImplementation,
+    TableFunction lq_func("LQ", {LogicalType::INTEGER}, LQFunction::LQImplementation,
         LQFunction::LQBind, LQFunction::LQInit);
-    
     ExtensionUtil::RegisterFunction(db_instance, lq_func);
 
+    TableFunction pe_func("PolyEval", {}, PolyEvalFunction::PolyEvalImplementation,
+        PolyEvalFunction::PolyEvalBind, PolyEvalFunction::PolyEvalInit);
+    ExtensionUtil::RegisterFunction(db_instance, pe_func);
     // JSON replacement scan
     auto &config = DBConfig::GetConfig(*db.instance);
     config.replacement_scans.emplace_back(LineageScanFunction::ReadLineageReplacement);

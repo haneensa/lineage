@@ -20,6 +20,7 @@ void LQ(idx_t qid, idx_t opid,
         unordered_map<idx_t, vector<shared_ptr<SourceContext>>>& sources);
 
 struct LQBindData : public TableFunctionData {
+  idx_t oid;
   idx_t offset = 0;
 };
 

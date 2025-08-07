@@ -45,9 +45,10 @@ void fill_iids_per_partition(bool nested, string table_name,
 
       // Get raw BIGINT data from child vector
       auto *child_data = FlatVector::GetData<int64_t>(child_vector);
+      sc->iids.resize(length);
 
       for (idx_t i = 0; i < length; i++) {
-          sc->iids.emplace_back(child_data[offset + i]);
+          sc->iids[i] = child_data[offset + i];
       }
       // std::cout << offset << " "<< length << std::endl;
       // ith entry has n element; this way i can tell from iids which ith it belong to
