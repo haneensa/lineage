@@ -29,7 +29,7 @@ void LQFunction::LQImplementation(ClientContext &context, TableFunctionInput &da
   output.data[0].Reference(source_vec);
   
   
-  Vector join_id_vec(Value::BIGINT(gstate.source_iter->second[gstate.outer_cur]->join_id));
+/*  Vector join_id_vec(Value::BIGINT(gstate.source_iter->second[gstate.outer_cur]->join_id));
   output.data[1].Reference(join_id_vec);
   
   // if gsate.sc.nested: iid -> oid
@@ -38,14 +38,14 @@ void LQFunction::LQImplementation(ClientContext &context, TableFunctionInput &da
   // else
   // break pipelines around aggs; all joins below an agg we can join
   // them based on position
-  output.data[2].Sequence(gstate.inner_offset, 1, count); // in_index
+  output.data[2].Sequence(gstate.inner_offset, 1, count); // in_index*/
   
-  Vector oid_vec(Value::BIGINT(0));
-  output.data[3].Reference(oid_vec);
+  Vector oid_vec(Value::BIGINT(bind_data.oid));
+  output.data[1].Reference(oid_vec);
                                             
   data_ptr_t ptr = (data_ptr_t)(inner.data() + gstate.inner_offset);
   Vector in_index(LogicalType::BIGINT, ptr);
-  output.data[4].Reference(in_index); // in_index
+  output.data[2].Reference(in_index); // in_index
 
   output.SetCardinality(count);
   gstate.inner_offset += count;
@@ -55,16 +55,17 @@ unique_ptr<FunctionData> LQFunction::LQBind(ClientContext &context, TableFunctio
                                                 vector<LogicalType> &return_types, vector<string> &names) {
 
   auto result = make_uniq<LQBindData>();
+  result->oid = input.inputs[0].GetValue<int>();
 
   // names.emplace_back("source_table");
   // return_types.emplace_back(LogicalType::VARCHAR);
   names.emplace_back("source_opid");
   return_types.emplace_back(LogicalType::INTEGER);
   
-  names.emplace_back("join_id"); // PK -> join id
+ /* names.emplace_back("join_id"); // PK -> join id
   return_types.emplace_back(LogicalType::ROW_TYPE);
   names.emplace_back("join_oid"); // PK -> join id
-  return_types.emplace_back(LogicalType::ROW_TYPE);
+  return_types.emplace_back(LogicalType::ROW_TYPE);*/
   
   names.emplace_back("out_rowid");
   return_types.emplace_back(LogicalType::ROW_TYPE);

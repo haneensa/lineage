@@ -1,4 +1,7 @@
-// EvalPoly(string sum_op, string mul_op, string annotations)
+// TODO: give agg id, get monomials of its input
+// TODO: create table that stores templates. user could add to the template (compile to c++) then use it to evaluate
+//       prov poly
+// EvalPoly(string template_name, string annotations)
 // count: mul -> *, sum -> +, type(annotations) ->int
 // prov poly string: mul -> X(a,c), + -> +( X(a,c) + X(a,d) ), type(annoations)-> string
 // sum: mul -> *, sum -> +, annotations -> column_id
@@ -17,20 +20,46 @@
 
 namespace duckdb {
 
+using ann_type = string; 
+// using ann_type = std::unordered_map<int, std::vector<int>>;
+
+
+struct PolyEvalBindData : public TableFunctionData {
+};
+
+template <typename T>
+struct PolyEvalGlobalState : public GlobalTableFunctionState {
+    explicit PolyEvalGlobalState(vector<T> annotation_p) :
+    annotation(std::move(annotation_p)), offset(0) {}
+    vector<T> annotation;
+    idx_t offset;
+};
+
+
+
 void PolyEvalFunction::PolyEvalImplementation(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
   auto &bind_data = data_p.bind_data->CastNoConst<PolyEvalBindData>();
-  auto &gstate = data_p.global_state->Cast<PolyEvalGlobalState>();
+  // if eval type is string, else if int, else ?
+  auto &gstate = data_p.global_state->Cast<PolyEvalGlobalState<ann_type>>();
   
   idx_t remaining = gstate.annotation.size() - gstate.offset;
   idx_t count = remaining  > STANDARD_VECTOR_SIZE ? STANDARD_VECTOR_SIZE : remaining;
+  output.SetCardinality(count);
   
   output.data[0].Sequence(gstate.offset, 1, count);
   
-  data_ptr_t ptr = (data_ptr_t)(gstate.annotation.data() + gstate.offset);
+
+  /*data_ptr_t ptr = (data_ptr_t)(gstate.annotation.data() + gstate.offset);
   Vector in_index(LogicalType::INTEGER, ptr);
-  output.data[1].Reference(in_index);
+  output.data[1].Reference(in_index);*/
+
+
+  auto &vec = output.data[1];
+  auto data = FlatVector::GetData<string_t>(vec);
+  for (idx_t i = 0; i < gstate.annotation.size(); ++i) {
+    data[i] = StringVector::AddString(vec, gstate.annotation[i]);
+  }
                                       
-  output.SetCardinality(count);
   gstate.offset += count;
 }
 
@@ -41,44 +70,52 @@ unique_ptr<FunctionData> PolyEvalFunction::PolyEvalBind(ClientContext &context, 
   names.emplace_back("out_rowid");
   return_types.emplace_back(LogicalType::ROW_TYPE);
   names.emplace_back("eval");
-  return_types.emplace_back(LogicalType::INTEGER);
+  return_types.emplace_back(LogicalType::VARCHAR);
   return std::move(result);
 }
 
-void filter_eval(vector<idx_t>& lineage,
-               vector<int>& in_ann, vector<int>& out_ann) {
+template <typename T>
+void filter_eval(const vector<idx_t>& lineage,
+                 const vector<T>& in_ann, vector<T>& out_ann) {
   for (idx_t i=0; i < lineage.size(); ++i)
     out_ann[i] = in_ann[lineage[i]];
 
   //  lineage: out_sources[0] = in_sources[0]
 }
 
-void join_eval(vector<idx_t>& lhs_lineage, vector<idx_t>& rhs_lineage,
-               vector<int>& lhs_ann, vector<int>& rhs_ann, vector<int>& out_ann) {
+template <typename T>
+void join_eval(const vector<idx_t>& lhs_lineage, const vector<idx_t>& rhs_lineage,
+               const vector<T>& lhs_ann, const vector<T>& rhs_ann, vector<T>& out_ann) {
   for (idx_t i=0; i < lhs_lineage.size(); ++i) {
-    out_ann[i] = lhs_ann[lhs_lineage[i]] * rhs_ann[rhs_lineage[i]];
+    // out_ann[i] = lhs_ann[lhs_lineage[i]] * rhs_ann[rhs_lineage[i]];
+    out_ann[i] = "[" + lhs_ann[lhs_lineage[i]] + "." +  rhs_ann[rhs_lineage[i]] + "]";
   }
-  // str: out_ann[i] = "[" + lhs_ann[lhs_lineage[i]] + "," +  rhs_ann[rhs_lineage[i]] + "]"
-  // lineage: out_sources[lhs] = lhs_out_sources[0]; out_sources[rhs] = rhs_out_sources[0];
+  // unordered_map<int, vector<idx_t>> out_sources
+  // for each src in lhs_out_sources:
+  //  out_sources[src][i] = lhs_out_sources[src][lhs_lineage[i]]
+  //
+  // lineage: out_sources[0] = lhs_out_sources[0]; out_sources[1] = rhs_out_sources[0];
 }
 
-void  agg_eval(vector<vector<idx_t>>& bw_lineage,
-                  vector<int>& in_ann, vector<int>& out_ann) {
+template <typename T>
+void  agg_eval(const vector<vector<idx_t>>& bw_lineage,
+               const vector<T>& in_ann, vector<T>& out_ann) {
   for (idx_t o=0; o < bw_lineage.size(); ++o) {
-    // out_ann[o] += "(""
+    out_ann[o] += "(";
     for (idx_t i=0; i < bw_lineage[o].size(); ++i) {
       idx_t iid = bw_lineage[o][i];
-      out_ann[o] += in_ann[iid];
-      // out_ann[o] += ( lhs_ann[lhs_lineage[i]] + "," + rhs_ann[rhs_lineage[i]] )
+      //out_ann[o] += in_ann[iid];
+      out_ann[o] += ( in_ann[iid] + "+" );
     }
-    // out_ann[o] += ")""
+    out_ann[o] += ")";
   }
 
   //  lineage: out_sources.append(in_sources)
 }
 
+template <typename T>
 idx_t PolyEval(ClientContext &context, idx_t qid, idx_t opid, idx_t wid,
-              std::unordered_map<idx_t, vector<int>>& annotations_per_opid) {
+              std::unordered_map<idx_t, vector<T>>& annotations_per_opid) {
   auto &lop_info = LineageState::qid_plans[qid][opid];
   string ltable = to_string(qid) + "_" + to_string(opid);
   
@@ -103,7 +140,11 @@ idx_t PolyEval(ClientContext &context, idx_t qid, idx_t opid, idx_t wid,
       }
       idx_t count = result->GetValue(0, 0).GetValue<idx_t>();
       std::cout << lop_info->table_name << " " << query << " " << count << std::endl;
-      annotations_per_opid[opid].assign(count, 1);
+      // annotations_per_opid[opid].assign(count, "1");
+      annotations_per_opid[opid].resize(count);
+      for (idx_t i=0; i < count; ++i) {
+        annotations_per_opid[opid][i] = lop_info->table_name + to_string(i);
+      }
       return opid;
     } case LogicalOperatorType::LOGICAL_PROJECTION: {
       return children_opid[0];
@@ -127,6 +168,11 @@ idx_t PolyEval(ClientContext &context, idx_t qid, idx_t opid, idx_t wid,
         << " " << children_opid[0] << " " << children_opid[1] << std::endl;
       out_ann.resize(lhs_lineage.size());
       join_eval(lhs_lineage, rhs_lineage, lhs_ann, rhs_ann, out_ann);
+      
+      // if (lineage)
+      // unordered_map<int, vector<idx_t>> out_sources
+      // for each src in lhs_out_sources:
+      //  filter_eval(lhs_lineage, lhs_out_sources[src], out_sources[src]);
       return opid;
     } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
       auto& in_ann =  annotations_per_opid[children_opid[0]];
@@ -134,6 +180,10 @@ idx_t PolyEval(ClientContext &context, idx_t qid, idx_t opid, idx_t wid,
       vector<vector<idx_t>>& lineage = LineageState::lineage_global_store[ltable];
       out_ann.resize(lineage.size());
       agg_eval(lineage, in_ann, out_ann);
+
+      // if (lineage)
+      // for each src in out_sources:
+      //    accumelate in a set
       return opid;
     } default: {}}
 
@@ -144,15 +194,16 @@ unique_ptr<GlobalTableFunctionState> PolyEvalFunction::PolyEvalInit(ClientContex
                                                  TableFunctionInitInput &input) {
   auto &bind_data = input.bind_data->CastNoConst<PolyEvalBindData>();
   
-  std::unordered_map<idx_t, vector<int>> annotations_per_opid;
+  std::unordered_map<idx_t, vector<ann_type>> annotations_per_opid;
+
   idx_t last_qid = LineageState::qid_plans_roots.size()-1;
   idx_t root_id = LineageState::qid_plans_roots[last_qid];
   
-  // TODO: move this out
-  InitGlobalLineage(last_qid, root_id);
+  // TODO: cache annotations reading
+
   idx_t out_opid = PolyEval(context, last_qid, root_id, 0 /*wid*/, annotations_per_opid);
   if (LineageState::debug) std::cout << "root -> " << out_opid << std::endl;
-  return make_uniq<PolyEvalGlobalState>(std::move(annotations_per_opid[out_opid]));
+  return make_uniq<PolyEvalGlobalState<ann_type>>(std::move(annotations_per_opid[out_opid]));
 }
 
 } // namespace duckdb

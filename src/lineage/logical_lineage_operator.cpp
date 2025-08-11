@@ -4,12 +4,10 @@
 
 #include "lineage/lineage_init.hpp"
 #include "lineage/physical_lineage_operator.hpp"
+#include "fade/physical_caching_operator.hpp"
 
-#include "duckdb/execution/operator/join/physical_delim_join.hpp"
 #include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
-#include "duckdb/execution/operator/aggregate/physical_perfecthash_aggregate.hpp"
-#include "duckdb/execution/operator/aggregate/physical_ungrouped_aggregate.hpp"
-#include "duckdb/planner/operator/logical_aggregate.hpp"
+#include "duckdb/execution/operator/join/physical_delim_join.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
@@ -203,6 +201,15 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
   if (LineageState::debug) {
     std::cout << "[DEBUG] LogicalLineageOperator::CreatePlan. " << std::endl;
     std::cout << child.ToString() << std::endl;
+  }
+  
+  // if we need payload
+  if (this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
+    auto agg_types = child.children[0].get().GetTypes();
+    // Replace agg child with caching op
+    auto agg_child = child.children[0];
+    child.children[0] = generator.Make<PhysicalCachingOperator>(agg_types, agg_child,
+                                      operator_id, query_id, child);
   }
   
   string table_name = to_string(query_id) + "_" + to_string(operator_id);

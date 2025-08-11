@@ -51,11 +51,18 @@ end = timer()
 print(end - start)
 print(lineage)
 
-#con.execute("PRAGMA set_debug_lineage(True)")
+con.execute("PRAGMA set_debug_lineage(True)")
+con.execute("PRAGMA PrepareLineage(1)")
+
 start = timer()
 lineage = con.execute(f"select * from PolyEval()").df()
 end = timer()
 print(end - start)
 print(lineage)
+
+con.execute("PRAGMA PrepareFade(['lineitem.l_linestatus'])")
+agg_idx = 0
+oids = [0]
+con.execute(f"PRAGMA Whatif({qid}, {agg_idx}, {oids}, ['lineitem.l_linestatus'])")
 
 con.execute("pragma clear_lineage")

@@ -11,26 +11,29 @@ struct LineageInfoNode {
   LogicalOperatorType type;
   JoinType join_type;
   vector<idx_t> children;
-  int n_output;
-  int n_input;
   string table_name;
   vector<string> columns;
   bool has_lineage;
   bool delim_flipped;
+  idx_t n_output;
   LineageInfoNode(idx_t opid, LogicalOperatorType type) : opid(opid), type(type),
-  n_output(0), n_input(-1), sink_id(-1), table_name(""),
-  has_lineage(false), delim_flipped(false) {}
+  n_output(0), sink_id(-1), table_name(""), has_lineage(false), delim_flipped(false) {}
 };
+
+typedef unordered_map<idx_t, vector<Vector>> Payload;
+typedef idx_t OPID;
+typedef idx_t QID;
+typedef string QID_OPID;
 
 struct LineageState {
    static bool capture;
    static bool persist;
    static bool debug;
-   static std::unordered_map<string, LogicalOperatorType> lineage_types;
-   static std::unordered_map<string, vector<std::pair<Vector, int>>> lineage_store;
-   static std::unordered_map<string, vector<vector<idx_t>>> lineage_global_store;
-   static std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> qid_plans;
-   static std::unordered_map<idx_t, idx_t> qid_plans_roots;
+   static std::unordered_map<QID_OPID, LogicalOperatorType> lineage_types;
+   static std::unordered_map<QID_OPID, vector<std::pair<Vector, int>>> lineage_store;
+   static std::unordered_map<QID_OPID, vector<vector<idx_t>>> lineage_global_store;
+   static std::unordered_map<QID, unordered_map<OPID, unique_ptr<LineageInfoNode>>> qid_plans;
+   static std::unordered_map<QID, OPID> qid_plans_roots;
 };
 
 unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,

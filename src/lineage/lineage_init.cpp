@@ -124,6 +124,7 @@ idx_t ProcessJoin(unique_ptr<LogicalOperator> &op, vector<idx_t>& rowids, idx_t 
 }
 
 
+// TODO: add two columns for the annotation for the partition id
 idx_t AnnotatePlan(unique_ptr<LogicalOperator> &op, idx_t query_id, idx_t& ref_opid) {
   idx_t opid = ref_opid++;
   auto lop =  make_uniq<LineageInfoNode>(opid, op->type);

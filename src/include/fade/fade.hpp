@@ -1,82 +1,63 @@
 #pragma once
 
+#include "lineage/lineage_init.hpp"
+
 #include "duckdb.hpp"
 
 namespace duckdb {
 
-//struct FadeState {
-//   static bool debug;
-   //static std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<AggInfo>>> qid_aggs;
-//};
+struct FadeNode {
+  idx_t n_interventions;
+  idx_t n_input;
+  idx_t num_worker;
+  vector<idx_t> annotations;
+	std::unordered_map<string, vector<void*>> alloc_vars;
+};
+
 
 /* helpers to init state for fade */
 
 // construct global 1D/2D per-op lineage
-void InitGlobalLineage(idx_t qid, idx_t opid);
-
 // set |input| and |output| for each operators
-//void InitCardinalities(idx_t qid, idx_t opid);
+idx_t InitGlobalLineage(idx_t qid, idx_t opid);
+void GetCachedVals(idx_t qid, idx_t opid);
+
+idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
+                      unordered_map<idx_t, FadeNode>& fade_data,
+                      unordered_map<string, vector<string>>& spec_map);
+
+idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
+                      unordered_map<idx_t, FadeNode>& fade_data,
+                      unordered_map<string, vector<string>>& spec_map);
 
 // iterate over referenced aggregations by a query
-/*void InitAggInfo(unique_ptr<AggInfo>& info,
-                vector<unique_ptr<Expression>>& aggs,
-                vector<LogicalType>& payload_types);*/
-// 1) PragmaPrepareLineage
-// // annotations as projection: select 1 (set all input to 1); select case(age>10 then 0 else 1); etc
-// // compile if sum_op and mul_op are not registered
-// 2) PragmaEvalPoly(string sum_op, string mul_op, string annotations);
-// 3) PragmaFaDE() -- sparse, dense
+// extract types, payload idx, etc;
+void InitAggInfo(string qid_opid, vector<unique_ptr<Expression>>& aggs,
+                vector<LogicalType>& payload_types);
+
+// TODO: dense helpers
+// TODO: make a plan for specializations (code gen)
+
+// sparse helpers
+unordered_map<string, vector<string>>  parse_spec(vector<Value>& cols_spec);
+unique_ptr<MaterializedQueryResult> get_codes(ClientContext &context, string table, string col);
+string generate_dict_query(const string &table, const vector<string> &columns);
+string generate_n_unique_count(const string &table, const vector<string> &columns);
+void read_annotations(ClientContext &context, unordered_map<string, vector<string>>& spec);
+void WhatIfSparse(ClientContext &context, int qid, int aggid, 
+                  unordered_map<string, vector<string>>& spec,
+                  vector<Value>& oids);
 
 
-// TODO: write custom function extraction from Expression
-// TODO: write custom function evaluation
-// TODO: write custom function output reading
-// TODO: write custom function global vals
-
-//  static CreateContext(Expression) -> extract types, payload idx, etc; create SubAggs
-/*
 struct AggFuncContext {
   string name;
   vector<string> sub_aggs;
   LogicalType return_type;
 
-  vector<int> groups_count;
-  vector<float> groups_sum;
-  vector<float> groups_sum_2;
-
   AggFuncContext(string name, LogicalType ret_typ, vector<string> sub_aggs)
-    : name(name), return_type(ret_typ), sub_aggs(sub_aggs) {}
+    : name(name), return_type(ret_typ), sub_aggs(std::move(sub_aggs)) {}
 };
 
-// class AggContext:
-//  string agg_key;
-//  string fname;
-//  vector<idx_t> payload_idx_vec; // avg, stddev both sum and count uses the same idx
-//  LogicalType return_type;
-//  vector<sting> sub_aggs; // use agg_key = fname + agg_idx
-//
-// sub class AggsContext
-// SumFunc:
-//  incremental_bw();
-//  incremental_forward();
-//  ReadOutput();
-//  has groups_sum
-//
-// CountFunc:
-//  incremental_bw();
-//  incremental_forward();
-//  ReadOutput();
-//  has groups_count
-//
-// AvgFunc:
-//  ReadOutput(); // access its subfuncs
-//  has groups_sum and groups_count
-//
-// stddevFunc:
-//  ReadOutput(); // access its subfuncs
-//  hash groups_sum, groups_count, groups_sum_2
-
-//  payload is allocated and populated independently alloc_vars too
 struct SubAggsContext {
   string name;
   idx_t payload_idx;
@@ -86,23 +67,36 @@ struct SubAggsContext {
     name(name), return_type(return_type), payload_idx(payload_idx), parent_idx(parent_idx) {}
 };
 
-struct AggInfo {
-  // map<sub_id, fun_name> aggregations are decomposed into 0-n functions
-  unordered_map<string, unique_ptr<SubAggsContext>> sub_aggs;
-  // map<agg_id, AggContext>  contains the agg name, the sub functions ids
-  unordered_map<idx_t, unique_ptr<AggFuncContext>> aggs;
-  vector<pair<idx_t, LogicalType>> payload_data;
+struct FadeResult {
+  idx_t opid;
+  idx_t n_output;
+  idx_t n_interventions;
+  vector<idx_t> oids;
+	std::unordered_map<string, vector<void*>> alloc_vars;
+};
 
-  int child_agg_id;
-  bool has_agg_child;
-  idx_t n_groups_attr;
-	
-  std::unordered_map<int, void*> input_data_map; // input to the aggregates
-  unordered_map<int, LogicalType> input_data_types_map;
-  
-  unordered_map<int, vector<Vector>> cached_cols;
-  vector<int> cached_cols_sizes;
-};*/
 
+// to evaluate all, iterate over aggs
+// else, aggs[offset]
+struct FadeState {
+  static bool debug;
+  static unordered_map<QID, FadeResult> fade_results;
+  // qid_opid -> map<sub_id, fun_name> aggregations are decomposed into 0-n functions
+  static unordered_map<QID_OPID, unordered_map<string, shared_ptr<SubAggsContext>>> sub_aggs;
+  // qid_opid -> map<agg_id, AggContext>  contains the agg name, the sub functions ids
+  static unordered_map<QID_OPID, unordered_map<idx_t, shared_ptr<AggFuncContext>>> aggs;
+
+  static unordered_map<string, idx_t> table_count;
+
+  // sparse annoatations
+  static unordered_map<string, unordered_map<string, vector<int32_t>>> table_col_annotations;
+  static unordered_map<string, idx_t> col_n_unique;
+   
+  // physical_cahing_operator
+  static unordered_map<QID_OPID, vector<pair<idx_t, LogicalType>>> payload_data;
+  static unordered_map<QID_OPID, Payload> cached_cols;
+  static unordered_map<QID_OPID, vector<uint32_t>> cached_cols_sizes;
+  static unordered_map<QID_OPID, unordered_map<int, pair<LogicalType, void*>>> input_data_map;
+};
 
 } // namespace duckdb

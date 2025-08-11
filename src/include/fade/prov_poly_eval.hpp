@@ -5,17 +5,6 @@
 
 namespace duckdb {
 
-struct PolyEvalBindData : public TableFunctionData {
-};
-
-struct PolyEvalGlobalState : public GlobalTableFunctionState {
-    explicit PolyEvalGlobalState(vector<int> annotation_p) :
-    annotation(std::move(annotation_p)), offset(0) {}
-    vector<int> annotation;
-    idx_t offset;
-};
-
-
 class PolyEvalFunction {
   public:
     static void PolyEvalImplementation(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);

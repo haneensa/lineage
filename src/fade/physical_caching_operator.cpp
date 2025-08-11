@@ -1,44 +1,54 @@
-#include "lineage/physical_caching_operator.hpp"
-
-#include <iostream>
-
-#include "lineage/lineage_init.hpp"
+#include "fade/physical_caching_operator.hpp"
 #include "fade/fade.hpp"
 
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parallel/thread_context.hpp"
-#include "duckdb/planner/operator/logical_join.hpp"
+#include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
+#include "duckdb/execution/operator/aggregate/physical_perfecthash_aggregate.hpp"
+#include "duckdb/execution/operator/aggregate/physical_ungrouped_aggregate.hpp"
+#include "duckdb/planner/operator/logical_aggregate.hpp"
 
+#include <iostream>
 
 namespace duckdb {
 PhysicalCachingOperator::PhysicalCachingOperator(vector<LogicalType> types, PhysicalOperator& child,
-        idx_t operator_id, idx_t query_id, vector<pair<idx_t, LogicalType>> payload_data)
+        idx_t operator_id, idx_t query_id, PhysicalOperator& parent)
       : PhysicalOperator(PhysicalOperatorType::EXTENSION, std::move(types), child.estimated_cardinality),
-      operator_id(operator_id), query_id(query_id), payload_data(std::move(payload_data)) {
+      operator_id(operator_id), query_id(query_id) {
+      string qid_opid = to_string(query_id) + "_" + to_string(operator_id);
+      if (parent.type == PhysicalOperatorType::HASH_GROUP_BY) {
+        PhysicalHashAggregate * gb = dynamic_cast<PhysicalHashAggregate *>(&parent);
+        InitAggInfo(qid_opid, gb->grouped_aggregate_data.aggregates, this->types);
+      } else if (parent.type == PhysicalOperatorType::PERFECT_HASH_GROUP_BY) {
+        PhysicalPerfectHashAggregate * gb = dynamic_cast<PhysicalPerfectHashAggregate *>(&parent);
+        InitAggInfo(qid_opid, gb->aggregates, this->types);
+      } else {
+        PhysicalUngroupedAggregate * gb = dynamic_cast<PhysicalUngroupedAggregate *>(&parent);
+        InitAggInfo(qid_opid, gb->aggregates, this->types);
+      }
+
+      payload_data = FadeState::payload_data[qid_opid];
       children.push_back(child);
 }
 
 class PhysicalCachingState : public OperatorState {
 public:
   explicit PhysicalCachingState(ExecutionContext &context, idx_t query_id, idx_t operator_id)
-    : query_id(query_id), operator_id(operator_id), n_input(0) {}
+    : query_id(query_id), operator_id(operator_id) {}
 
 public:
   void Finalize(const PhysicalOperator &op, ExecutionContext &context) override {
     if (LineageState::capture == false || LineageState::persist == false) return;
-    
-
-	/*  auto &agg_info = FadeState::qid_aggs[query_id][operator_id];
-    if (!agg_info->cached_cols.empty()) return;
-    agg_info->cached_cols = std::move(cached_cols);
-    agg_info->cached_cols_sizes = std::move(cached_cols_sizes);
-*/
-    LineageState::qid_plans[query_id][operator_id]->n_input = n_input;
+    string qid_opid = to_string(query_id) + "_" + to_string(operator_id);
+    if (!FadeState::cached_cols[qid_opid].empty()) return;
+    std::cout << qid_opid << " CACHE " << cached_cols_sizes.size() << std::endl;
+    FadeState::cached_cols[qid_opid] = std::move(cached_cols);
+	  FadeState::cached_cols_sizes[qid_opid] = std::move(cached_cols_sizes);
   }
    
-  unordered_map<int, vector<Vector>> cached_cols;
-  vector<int> cached_cols_sizes;
+  unordered_map<idx_t, vector<Vector> > cached_cols;
+  vector<uint32_t> cached_cols_sizes;
   idx_t query_id;
   idx_t operator_id;
   idx_t n_input;

@@ -21,12 +21,31 @@ PhysicalLineageOperator::PhysicalLineageOperator(vector<LogicalType> types, Phys
       children.push_back(child);
 }
 
+class LineageGlobalState : public GlobalOperatorState {
+  public:
+    LineageGlobalState() : cur_partition(0) {}
+    
+    std::atomic<idx_t> cur_partition;
+};
+
+unsigned NBits(unsigned n) {
+    return n == 0 ? 0 : static_cast<unsigned>(std::log2(n)) + 1;
+}
+
 class PhysicalLineageState : public OperatorState {
 public:
   explicit PhysicalLineageState(ExecutionContext &context, idx_t query_id, idx_t operator_id,
       LogicalOperatorType dependent_type, int source_count, string join_type, idx_t partition_id) 
     : offset(0), n_input(0), query_id(query_id), operator_id(operator_id), source_count(source_count),
       join_type(join_type), dependent_type(dependent_type), partition_id(partition_id) {
+      // hack: use bit packing to add the partition id with the annotations
+      // TODO: add independent column
+      // 1) how many partitions -> need to know max threads
+	    // idx_t n_threads = NumericCast<idx_t>(TaskScheduler::GetScheduler(context.client).NumberOfThreads());
+      // 2) get number of bits
+      // idx_t bits = NBits(n_threads);
+      // std::cout << "n_threads: " << n_threads << " bits: " << bits << std::endl;
+      // 3) set the higher bits to the partitionid
   }
 
 public:
@@ -47,7 +66,6 @@ public:
     if (source_count == 2 || join_type=="RIGHT_SEMI" || join_type=="RIGHT") {
       LineageState::lineage_store[table_name+"_right"] = std::move(lineage_right);
     }
-    //LineageState::qid_plans[query_id][operator_id]->n_output = n_input;
   }
    
   // todo: maybe decompose it into two arrays? one for Vectors one for size
@@ -70,6 +88,8 @@ unique_ptr<GlobalOperatorState> PhysicalLineageOperator::GetGlobalOperatorState(
 }
 
 unique_ptr<OperatorState> PhysicalLineageOperator::GetOperatorState(ExecutionContext &context) const {
+  // sink will have partition_idx the same as this source; if sink partition idx is X then it must have
+  // came from X partition in the source
   // set the partition idx for the first decendant lineage operator, then use the same index
   string table_name = to_string(query_id) + "_" + to_string(operator_id);
   auto &gstate = op_state->Cast<LineageGlobalState>();
@@ -149,6 +169,7 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
     }
 
     if (!is_root) {
+      //
       // This is not the root, reindex complex annotations
       chunk.data.back().Sequence(state.offset, 1, input.size());
       state.offset += input.size();

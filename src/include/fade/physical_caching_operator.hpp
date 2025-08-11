@@ -10,7 +10,7 @@ namespace duckdb {
 class PhysicalCachingOperator : public PhysicalOperator {
 public:
     PhysicalCachingOperator(vector<LogicalType> types, PhysicalOperator&child,
-        idx_t operator_id, idx_t query_id, vector<pair<idx_t, LogicalType>> payload_data);
+        idx_t operator_id, idx_t query_id, PhysicalOperator&parent);
 
     OperatorResultType Execute(ExecutionContext &context,
                              DataChunk &input, 
