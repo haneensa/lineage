@@ -27,7 +27,9 @@ set(EXTENSION_SOURCES
     src/fade/physical_caching_operator.cpp
     src/fade/fade.cpp
     src/fade/fade_reader.cpp
+    src/fade/get_predicates.cpp
     src/fade/sparse_helper.cpp
+    src/fade/sparse_aggs.cpp
     src/fade/sparse_eval.cpp
     src/fade/helper.cpp
     src/fade/prov_poly_eval.cpp

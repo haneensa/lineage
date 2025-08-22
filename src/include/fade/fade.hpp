@@ -6,48 +6,24 @@
 
 namespace duckdb {
 
+typedef  pair<LogicalType, vector<void*>> OutPayload;
+
 struct FadeNode {
   idx_t n_interventions;
   idx_t n_input;
+  idx_t n_output;
   idx_t num_worker;
   vector<idx_t> annotations;
-	std::unordered_map<string, vector<void*>> alloc_vars;
+	std::unordered_map<string, OutPayload> alloc_typ_vars;
 };
 
-
-/* helpers to init state for fade */
-
-// construct global 1D/2D per-op lineage
-// set |input| and |output| for each operators
-idx_t InitGlobalLineage(idx_t qid, idx_t opid);
-void GetCachedVals(idx_t qid, idx_t opid);
-
-idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
-                      unordered_map<idx_t, FadeNode>& fade_data,
-                      unordered_map<string, vector<string>>& spec_map);
-
-idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
-                      unordered_map<idx_t, FadeNode>& fade_data,
-                      unordered_map<string, vector<string>>& spec_map);
-
-// iterate over referenced aggregations by a query
-// extract types, payload idx, etc;
-void InitAggInfo(string qid_opid, vector<unique_ptr<Expression>>& aggs,
-                vector<LogicalType>& payload_types);
-
-// TODO: dense helpers
-// TODO: make a plan for specializations (code gen)
-
-// sparse helpers
-unordered_map<string, vector<string>>  parse_spec(vector<Value>& cols_spec);
-unique_ptr<MaterializedQueryResult> get_codes(ClientContext &context, string table, string col);
-string generate_dict_query(const string &table, const vector<string> &columns);
-string generate_n_unique_count(const string &table, const vector<string> &columns);
-void read_annotations(ClientContext &context, unordered_map<string, vector<string>>& spec);
-void WhatIfSparse(ClientContext &context, int qid, int aggid, 
-                  unordered_map<string, vector<string>>& spec,
-                  vector<Value>& oids);
-
+struct FadeResult {
+  idx_t opid;
+  idx_t n_output;
+  idx_t n_interventions;
+  vector<Value> oids;
+	std::unordered_map<string, OutPayload> alloc_typ_vars;
+};
 
 struct AggFuncContext {
   string name;
@@ -67,13 +43,50 @@ struct SubAggsContext {
     name(name), return_type(return_type), payload_idx(payload_idx), parent_idx(parent_idx) {}
 };
 
-struct FadeResult {
-  idx_t opid;
-  idx_t n_output;
-  idx_t n_interventions;
-  vector<idx_t> oids;
-	std::unordered_map<string, vector<void*>> alloc_vars;
-};
+
+
+/* helpers to init state for fade */
+
+void InitFuncs(DatabaseInstance& db_instance);
+
+// construct global 1D/2D per-op lineage
+// set |input| and |output| for each operators
+idx_t InitGlobalLineage(idx_t qid, idx_t opid);
+void GetCachedVals(idx_t qid, idx_t opid);
+
+idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
+                      unordered_map<idx_t, FadeNode>& fade_data,
+                      unordered_map<string, vector<string>>& spec_map);
+
+idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
+                      unordered_map<idx_t, FadeNode>& fade_data,
+                      unordered_map<string, vector<string>>& spec_map);
+
+// iterate over referenced aggregations by a query
+// extract types, payload idx, etc;
+void InitAggInfo(string qid_opid, vector<unique_ptr<Expression>>& aggs,
+                vector<LogicalType>& payload_types);
+
+template<class T>
+void allocate_agg_output(FadeNode& fnode, idx_t t, idx_t n_interventions,
+    int n_output, string out_var);
+
+// TODO: dense helpers
+// TODO: make a plan for specializations (code gen)
+
+// sparse helpers
+unordered_map<string, vector<string>>  parse_spec(vector<Value>& cols_spec);
+unique_ptr<MaterializedQueryResult> get_codes(ClientContext &context, string table, string col);
+string generate_dict_query(const string &table, const vector<string> &columns);
+string generate_n_unique_count(const string &table, const vector<string> &columns);
+void read_annotations(ClientContext &context, unordered_map<string, vector<string>>& spec);
+void WhatIfSparse(ClientContext &context, int qid, int aggid, 
+                  unordered_map<string, vector<string>>& spec,
+                  vector<Value>& oids);
+void sparse_incremental_bw(string func, const int g, const vector<idx_t>& bw_lineage, const vector<idx_t>&var_0,
+                          void* __restrict__  out,
+                          unordered_map<int, pair<LogicalType, void*>>& input_data_map,
+                          int n_interventions, int col_idx);
 
 
 // to evaluate all, iterate over aggs
@@ -97,6 +110,10 @@ struct FadeState {
   static unordered_map<QID_OPID, Payload> cached_cols;
   static unordered_map<QID_OPID, vector<uint32_t>> cached_cols_sizes;
   static unordered_map<QID_OPID, unordered_map<int, pair<LogicalType, void*>>> input_data_map;
+  
+  static unordered_map<string, unique_ptr<MaterializedQueryResult>> codes;
+  static unordered_map<string, vector<string>> cached_spec_map;
+  static vector<string> cached_spec_stack;
 };
 
 } // namespace duckdb

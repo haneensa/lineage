@@ -7,6 +7,7 @@
 namespace duckdb {
 
 struct FadeReaderBindData : public TableFunctionData {
+  string qid_opid;
   idx_t qid;
   idx_t out_var;
   string fname;
@@ -22,85 +23,75 @@ struct FadeReaderGlobalState : public GlobalTableFunctionState {
 };
 
 void FadeReaderFunction::FadeReaderImplementation(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
-  return;
-  /*
-  if (!data_p.local_state) return;
   auto &data = data_p.local_state->Cast<FadeReaderLocalState>();
   auto &gstate = data_p.global_state->Cast<FadeReaderGlobalState>();
-  auto &bind_data = data_p.bind_data->CastNoConst<FadeReaderBindData>();
+  auto &bdata = data_p.bind_data->CastNoConst<FadeReaderBindData>();
 
-  auto fnode_iter = FadeState::fade_results.find(bind_node->qid);
-  if (fnode_iter == FadeState::fade_result.end()) return;
+  auto fnode_iter = FadeState::fade_results.find(bdata.qid);
+  if (fnode_iter == FadeState::fade_results.end()) return;
   auto &fnode = fnode_iter->second;
-  idx_t out_var = bind_data.out_var;  // 1) get out_var idx
-  auto &lop_info = LineageState::qid_plans[bind_node->qid][fnode->opid];
-  string fname = bind_data.fname;
-  string out_key = fname + "_" + to_string(out_var);
-
-  // std::cout << "fade reader implementation " << fname << " " << out_var << " " << out_key << std::endl;
-	if (data.offset >= bind_data.n_interventions)	return; // finished returning values
+	if (data.offset >= bdata.n_interventions)	return; // finished returning values
 
   // start returning values
   // either fill up the chunk or return all the remaining columns
-  idx_t col = 1;
-	idx_t count =  = bind_data.n_interventions - data.offset;
+	idx_t count = bdata.n_interventions - data.offset;
   if (count >= STANDARD_VECTOR_SIZE) {
     count = STANDARD_VECTOR_SIZE;
   }
   
-  for (int i=0; i < bind_data.n_groups; ++i) {
-    int index = i * bind_data.n_interventions + data.offset;
-    idx_t g = i;
-    if (!fnode->oids.empty()) g = fnode->oids[i];
+  idx_t col = 1;
+  for (int i=0; i < bdata.n_groups; ++i) {
+    int index = i * bdata.n_interventions + data.offset;
+    idx_t row = i;
+    if (!fnode.oids.empty()) row = fnode.oids[i].GetValue<idx_t>();
     output.data[col].Initialize(true, count);
-    IReader<fname>(out_var, output, g, col, count);
+    IReader(bdata.fname, bdata.qid_opid, fnode, bdata.out_var,  output, index, row, col, count);
     col++;
   }
 
   output.data[0].Sequence(data.offset, 1, count);
-
+	output.SetCardinality(count);
   data.offset += count;
-	output.SetCardinality(count);*/
 }
 
 unique_ptr<FunctionData> FadeReaderFunction::FadeReaderBind(ClientContext &context, TableFunctionBindInput &input,
                                                 vector<LogicalType> &return_types, vector<string> &names) {
 
   auto result = make_uniq<FadeReaderBindData>();
-  /*
-  result->out_var = 0; // 1) get out_var idx using agg_id
-  result->qid = 0;
-
-  auto fnode_iter = FadeState::fade_results.find(result->qid);
-  if (fnode_iter == FadeState::fade_result.end()) return std::move(result);
-  
-  auto &fnode = fnode_iter->second;
+  result->qid = input.inputs[0].GetValue<int>();
+  idx_t agg_id = input.inputs[1].GetValue<int>(); // get out_var idx using agg_id
+  result->out_var = agg_id;
   
   names.emplace_back("pid");
   return_types.emplace_back(LogicalType::INTEGER);
-
-  auto &agg_context = FadeState::aggs[result->out_var];
   
+  auto fnode_iter = FadeState::fade_results.find(result->qid);
+  if (fnode_iter == FadeState::fade_results.end()) return std::move(result);
+  
+  auto &fnode = fnode_iter->second;
+  result->qid_opid = to_string(result->qid) + "_" + to_string(fnode.opid);
+
+  
+  if (FadeState::debug)
+  std::cout << "found qid: " << result->qid_opid << " " << agg_id << " " << result->out_var << std::endl;
+  
+  auto acontext_iter = FadeState::aggs[result->qid_opid].find(result->out_var);
+  if (acontext_iter == FadeState::aggs[result->qid_opid].end()) return std::move(result);
+  auto &agg_context = acontext_iter->second;
+
   LogicalType &ret_type = agg_context->return_type;
   result->fname = agg_context->name;
-  result->n_interventions = fnode->n_interventions;
+  result->n_interventions = fnode.n_interventions;
   result->n_groups = 0;
+  
+  if (FadeState::debug)
+  std::cout << "found out_var: " << result->out_var << " " << fnode.oids.size() << std::endl;
 
-  if (!fnode->oids.empty()) {
-    for (int i=0; i < fnode->oids.size(); ++i) {
-      idx_t g = fnode->oids[i];
-      if (g >= fnode->n_output) continue;
-      result->n_groups++;
-      names.emplace_back("g" + to_string(i));
-      return_types.emplace_back(ret_type);
-    }
-  } else {
-    result->n_groups = fnode->n_output;
-    for (int i=0; i < fnode->n_output; ++i) {
-      names.emplace_back("g" + to_string(i));
-      return_types.emplace_back(ret_type);
-    }
-  }*/
+  result->n_groups = fnode.oids.empty() ? fnode.n_output : fnode.oids.size();
+  for (int i=0; i < result->n_groups; ++i) {
+    names.emplace_back("g" + to_string(i));
+    return_types.emplace_back(ret_type);
+  }
 
   return std::move(result);
 }

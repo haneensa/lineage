@@ -42,7 +42,7 @@ public:
     if (LineageState::capture == false || LineageState::persist == false) return;
     string qid_opid = to_string(query_id) + "_" + to_string(operator_id);
     if (!FadeState::cached_cols[qid_opid].empty()) return;
-    std::cout << qid_opid << " CACHE " << cached_cols_sizes.size() << std::endl;
+    if (FadeState::debug) std::cout << qid_opid << " CACHE " << cached_cols_sizes.size() << std::endl;
     FadeState::cached_cols[qid_opid] = std::move(cached_cols);
 	  FadeState::cached_cols_sizes[qid_opid] = std::move(cached_cols_sizes);
   }

@@ -9,8 +9,6 @@
 #include "lineage/lineage_global.hpp"
 #include "lineage/lineage_query.hpp"
 
-#include "fade/prov_poly_eval.hpp"
-#include "fade/fade_reader.hpp"
 #include "fade/fade.hpp"
 
 #include "duckdb/main/client_context.hpp"
@@ -58,6 +56,26 @@ inline void PragmaClearLineage(ClientContext &context, const FunctionParameters 
     }
   }
   FadeState::input_data_map.clear();
+
+  std::cout << "pre done" << std::endl;
+  for (auto& fade_res : FadeState::fade_results) {
+    for (auto& vars : fade_res.second.alloc_typ_vars) {
+      for (auto & vars_t : vars.second.second) {
+        if (vars.second.first == LogicalType::INTEGER) {
+          delete static_cast<int*>(vars_t);
+        } else {
+          delete static_cast<float*>(vars_t);
+        }
+      }
+    }
+  }
+  std::cout << "done" << std::endl;
+
+  FadeState::fade_results.clear();
+
+  FadeState::codes.clear();
+  FadeState::cached_spec_map.clear();
+  FadeState::cached_spec_stack.clear();
 }
 
 inline void PragmaLineageDebug(ClientContext &context, const FunctionParameters &parameters) {
@@ -71,39 +89,6 @@ inline void PragmaSetPersistLineage(ClientContext &context, const FunctionParame
 inline void PragmaSetLineage(ClientContext &context, const FunctionParameters &parameters) {
   LineageState::capture  = parameters.values[0].GetValue<bool>();
 }
-
-// TODO: define in fade.cpp
-// 1) prepapre_lineage: query id
-inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameters &parameters) {
-	int qid = parameters.values[0].GetValue<int>();
-  idx_t last_qid = LineageState::qid_plans_roots.size()-1;
-  idx_t root_id = LineageState::qid_plans_roots[last_qid];
-  std::cout << "PRAGMA PrepapreLineage: " <<  last_qid << " " << root_id << std::endl;
-  InitGlobalLineage(last_qid, root_id);
-  GetCachedVals(last_qid, root_id);
-  //compute_count_sum_sum2(qid, root_id);
-}
-
-inline void PragmaPrepareFade(ClientContext &context, const FunctionParameters &parameters) {
-  auto spec_values = ListValue::GetChildren(parameters.values[0]);
-  std::cout << "PRAGMA PrepapreFade: " << spec_values.size() << std::endl;
-  // 1. Parse: spec. Input (t.col1|t.col2|..)
-  unordered_map<string, vector<string>> spec_map = parse_spec(spec_values);
-  // 2. Read: annotations
-  read_annotations(context, spec_map);
-}
-
-inline void PragmaWhatif(ClientContext &context, const FunctionParameters &parameters) {
-	int qid = parameters.values[0].GetValue<int>();
-  idx_t last_qid = LineageState::qid_plans_roots.size()-1;
-	int agg_idx = parameters.values[1].GetValue<int>();
-  auto oids = ListValue::GetChildren(parameters.values[2]);
-  auto spec_values = ListValue::GetChildren(parameters.values[3]);
-  std::cout << "WhatIf: " << last_qid << " " << agg_idx << " " << oids.size() << " " << spec_values.size() << std::endl;
-  unordered_map<string, vector<string>> spec_map = parse_spec(spec_values);
-  WhatIfSparse(context, last_qid, agg_idx, spec_map, oids);
-}
-
 
 void LineageExtension::Load(DuckDB &db) {
     auto optimizer_extension = make_uniq<OptimizerExtension>();
@@ -140,35 +125,13 @@ void LineageExtension::Load(DuckDB &db) {
 
     TableFunction global_func("global_lineage", {}, LineageGFunction::LineageGImplementation,
         LineageGFunction::LineageGBind, LineageGFunction::LineageGInit);
-    
     ExtensionUtil::RegisterFunction(db_instance, global_func);
     
     TableFunction lq_func("LQ", {LogicalType::INTEGER}, LQFunction::LQImplementation,
         LQFunction::LQBind, LQFunction::LQInit);
     ExtensionUtil::RegisterFunction(db_instance, lq_func);
 
-    TableFunction pe_func("PolyEval", {}, PolyEvalFunction::PolyEvalImplementation,
-        PolyEvalFunction::PolyEvalBind, PolyEvalFunction::PolyEvalInit);
-    ExtensionUtil::RegisterFunction(db_instance, pe_func);
-
-    // TODO: group into single function defined in fade.cpp
-    // qid, agg id
-    TableFunction fade_reader("fade_reader", {LogicalType::INTEGER, LogicalType::INTEGER},
-        FadeReaderFunction::FadeReaderImplementation, FadeReaderFunction::FadeReaderBind);
-    ExtensionUtil::RegisterFunction(db_instance, fade_reader);
-    
-    auto prepare_fade_fun = PragmaFunction::PragmaCall("PrepareFade",
-        PragmaPrepareFade, {LogicalType::LIST(LogicalType::VARCHAR)});
-    ExtensionUtil::RegisterFunction(db_instance, prepare_fade_fun);
-
-    auto prepare_lineage_fun = PragmaFunction::PragmaCall("PrepareLineage",
-        PragmaPrepareLineage, {LogicalType::INTEGER});
-    ExtensionUtil::RegisterFunction(db_instance, prepare_lineage_fun);
-
-    auto whatif_fun = PragmaFunction::PragmaCall("Whatif",
-        PragmaWhatif, {LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::LIST(LogicalType::INTEGER),
-        LogicalType::LIST(LogicalType::VARCHAR)});
-    ExtensionUtil::RegisterFunction(db_instance, whatif_fun);
+    InitFuncs(db_instance);
 
     // JSON replacement scan
     auto &config = DBConfig::GetConfig(*db.instance);

@@ -31,11 +31,12 @@ idx_t InitGlobalLineage(idx_t qid, idx_t opid) {
       vector<std::pair<Vector, int>>& chunked_lineage = LineageState::lineage_store[table];
       vector<vector<idx_t>>& glineage = LineageState::lineage_global_store[table];
       glineage.emplace_back();
-      std::cout << "chunked_lineage: " << chunked_lineage.size() << std::endl;
+      if (FadeState::debug)
+        std::cout << "chunked_lineage: " << chunked_lineage.size() << std::endl;
       for (auto& lin_n :chunked_lineage) {
         int64_t* col = reinterpret_cast<int64_t*>(lin_n.first.GetData());
         idx_t count = lin_n.second;
-        std::cout << "count " << count << std::endl;
+        if (FadeState::debug) std::cout << "count " << count << std::endl;
         for (idx_t i = 0; i < count; i++) glineage[0].emplace_back(col[i]);
       }
       lop_info->n_output = glineage[0].size();
@@ -165,9 +166,7 @@ void InitAggInfo(string qid_opid, vector<unique_ptr<Expression>>& aggs,
   }
 }
 
-template<class T1>
-T1* CastDecimalToFloat(string qid_opid, idx_t count, LogicalType typ, idx_t col_idx, idx_t i) {
-	Vector new_vec(LogicalType::FLOAT, count);
+void CastDecimalToFloat(Vector& new_vec, string qid_opid, idx_t count, LogicalType typ, idx_t col_idx, idx_t i) {
   CastParameters parameters;
   uint8_t width = DecimalType::GetWidth(typ);
   uint8_t scale = DecimalType::GetScale(typ);
@@ -192,8 +191,6 @@ T1* CastDecimalToFloat(string qid_opid, idx_t count, LogicalType typ, idx_t col_
     throw InternalException("Unimplemented internal type for decimal");
   }
   }
-	
-  return  reinterpret_cast<T1*>(new_vec.GetData());
 }
 
 template<class T1, class T2>
@@ -208,12 +205,17 @@ T2* GetInputVals(string qid_opid, idx_t col_idx, idx_t row_count) {
 		T1* col = reinterpret_cast<T1*>(FadeState::cached_cols[qid_opid][col_idx][i].GetData());
 		int count = FadeState::cached_cols_sizes[qid_opid][i];
 		if (typ.id() == LogicalTypeId::DECIMAL) {
-      col = CastDecimalToFloat<T1>(qid_opid, count, typ, col_idx, i);
-		}
-    // TODO: handle null values
-		for (idx_t i=0; i < count; ++i) {
-			input_values[i+offset] = col[i];
-		}
+	    Vector new_vec(LogicalType::FLOAT, count);
+      CastDecimalToFloat(new_vec, qid_opid, count, typ, col_idx, i);
+      col = reinterpret_cast<T1*>(new_vec.GetData());
+      for (idx_t i=0; i < count; ++i) {
+        input_values[i+offset] = col[i];
+      }
+		} else {
+      for (idx_t i=0; i < count; ++i) {
+        input_values[i+offset] = col[i];
+      }
+    }
 		offset +=  count;
 	}
 
@@ -232,7 +234,8 @@ void GetCachedVals(idx_t qid, idx_t opid) {
     for (auto& c : FadeState::cached_cols_sizes[qid_opid]) {
       count += c;
     }
-    std::cout << qid_opid << " GetCachedVals " << count << " " << FadeState::cached_cols_sizes.size() <<  std::endl;
+    if (FadeState::debug)
+      std::cout << qid_opid << " GetCachedVals " << count << " " << FadeState::cached_cols_sizes.size() <<  std::endl;
     for (auto& out_var : FadeState::payload_data[qid_opid]) {
       int col_idx = out_var.first;
       if (FadeState::cached_cols[qid_opid][col_idx].empty()) continue;
@@ -262,11 +265,8 @@ void GetCachedVals(idx_t qid, idx_t opid) {
 template<class T>
 void allocate_agg_output(FadeNode& fnode, idx_t t, idx_t n_interventions,
     int n_output, string out_var) {
-	fnode.alloc_vars[out_var][t] = aligned_alloc(64, sizeof(T) * n_output * n_interventions);
-	if (fnode.alloc_vars[out_var][t] == nullptr) {
-		fnode.alloc_vars[out_var][t] = malloc(sizeof(T) * n_output * n_interventions);
-	}
-	memset(fnode.alloc_vars[out_var][t], 0, sizeof(T) * n_output * n_interventions);
+	fnode.alloc_typ_vars[out_var].second[t] = malloc(sizeof(T) * n_output * n_interventions);
+	memset(fnode.alloc_typ_vars[out_var].second[t], 0, sizeof(T) * n_output * n_interventions);
 }
 
 
@@ -308,7 +308,7 @@ idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
         idx_t col_idx = sub_agg.second->payload_idx;
         string& func = sub_agg.second->name;
         string out_key = sub_agg.first;
-        fnode.alloc_vars[out_key].assign(fnode.num_worker, 0);
+        fnode.alloc_typ_vars[out_key].second.assign(fnode.num_worker, 0);
         for (int t=0; t < fnode.num_worker; ++t) {
           if (typ == LogicalType::INTEGER)
             allocate_agg_output<int>(fnode, t, fnode.n_interventions, n_output, out_key);

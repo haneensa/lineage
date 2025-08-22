@@ -54,101 +54,6 @@ int whatif_sparse_join(const vector<idx_t>& lhs_lineage, const vector<idx_t>& rh
 	return 0;
 }
 
-template <typename Tag>
-int sparse_incremental_bw(const int g, const vector<idx_t>& bw_lineage, const vector<idx_t>&var_0,
-                          void* __restrict__  out,
-                          unordered_map<int, pair<LogicalType, void*>>& input_data_map,
-                          int n_interventions, int col_idx);
-
-struct CountTag {};
-struct SumTag {};
-struct Sum2Tag {};
-
-// TODO: add logic to support registering new aggregation function
-template <>
-int sparse_incremental_bw<CountTag>(const int g, const vector<idx_t>& bw_lineage, const vector<idx_t>&var_0,
-                                void* __restrict__  out,
-                                unordered_map<int, pair<LogicalType, void*>>& input_data_map,
-                                int n_interventions, int col_idx) {
-	int col = g * n_interventions;
-  int* __restrict__ out_int = (int*)out;
-  for (int i=0; i < bw_lineage.size(); ++i) {
-    int iid = bw_lineage[i];
-    int row = var_0[iid];
-    out_int[col + row]++;
-  }
-	return 0;
-}
-
-template <>
-int sparse_incremental_bw<SumTag>(const int g, const vector<idx_t>& bw_lineage, const vector<idx_t>&var_0,
-                                void* __restrict__  out,
-                                unordered_map<int, pair<LogicalType, void*>>& input_data_map,
-                                int n_interventions, int col_idx) {
-	int col = g * n_interventions;
-  if (input_data_map[col_idx].first == LogicalType::INTEGER) {
-    int* __restrict__  out_int = (int*)out;
-    int *in_arr = reinterpret_cast<int *>(input_data_map[col_idx].second);
-    for (int i=0; i < bw_lineage.size(); ++i) {
-      int iid = bw_lineage[i];
-    //  std::cout << i << " " << iid << " " << var_0.size() << std::endl;
-      int row = var_0[iid];
-    //  std::cout << " post 1 " << row << std::endl;
-      out_int[col + row] +=  in_arr[iid];
-    //  std::cout << " post " << std::endl;
-    }
-  } else {
-    float* __restrict__  out_int = (float*)out;
-    float *in_arr = reinterpret_cast<float *>(input_data_map[col_idx].second);
-    for (int i=0; i < bw_lineage.size(); ++i) {
-      int iid = bw_lineage[i];
-   //   std::cout << i << " " << iid << " " << var_0.size() << std::endl;
-      int row = var_0[iid];
-     // std::cout << " post 1 " << row << std::endl;
-      out_int[col + row] +=  in_arr[iid];
-     // std::cout << " post " << std::endl;
-    }
-  }
-	return 0;
-} 
-
-template <>
-int sparse_incremental_bw<Sum2Tag>(const int g, const vector<idx_t>& bw_lineage, const vector<idx_t>&var_0,
-                                void* __restrict__  out,
-                                unordered_map<int, pair<LogicalType, void*>>& input_data_map,
-                                int n_interventions, int col_idx) {
-  float* __restrict__  out_float = (float*)out;
-	int col = g * n_interventions;
-  if (input_data_map[col_idx].first == LogicalType::INTEGER) {
-    int *in_arr = reinterpret_cast<int *>(input_data_map[col_idx].second);
-    for (int i=0; i < bw_lineage.size(); ++i) {
-      int iid = bw_lineage[i];
-      int row = var_0[iid];
-      out_float[col + row] += (in_arr[iid] * in_arr[iid]);
-    }
-  } else {
-    float *in_arr = reinterpret_cast<float *>(input_data_map[col_idx].second);
-    for (int i=0; i < bw_lineage.size(); ++i) {
-      int iid = bw_lineage[i];
-      int row = var_0[iid];
-      out_float[col + row] += (in_arr[iid] * in_arr[iid]);
-    }
-  }
-	return 0;
-}
-
-void sparse_incremental_bw(string func, const int g, const vector<idx_t>& bw_lineage, const vector<idx_t>&var_0,
-                          void* __restrict__  out,
-                          unordered_map<int, pair<LogicalType, void*>>& input_data_map,
-                          int n_interventions, int col_idx) {
-  if (func == "sum") {
-    sparse_incremental_bw<SumTag>(g, bw_lineage, var_0, out, input_data_map,  n_interventions, col_idx);
-  } else if (func == "count") {
-    sparse_incremental_bw<CountTag>(g, bw_lineage, var_0, out, input_data_map, n_interventions, col_idx);
-  } else if (func == "sum_2") {
-    sparse_incremental_bw<Sum2Tag>(g, bw_lineage, var_0, out, input_data_map, n_interventions, col_idx);
-  }
-}
 
 
 idx_t InterventionSparse(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
@@ -166,7 +71,7 @@ idx_t InterventionSparse(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
   string qid_opid = to_string(qid) + "_" + to_string(opid);
   auto& fnode = fade_data[opid];
 
-  if (LineageState::debug)
+  if (FadeState::debug)
     std::cout << "tid: " << thread_id << " ISparse: " << EnumUtil::ToChars<LogicalOperatorType>(lop_info->type) << 
       " " << qid_opid << ", n_output " << lop_info->n_output <<  " " << fnode.n_interventions << std::endl;
 
@@ -178,7 +83,9 @@ idx_t InterventionSparse(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
     for (const string  &col : spec_map[lop_info->table_name]) {
       // for each annotations, combine them a[0] + a[1] + .. + a[n]
       string spec_key = lop_info->table_name + "." + col;
-      std::cout <<  lop_info->table_name << " base " << col << " "<< n_input << std::endl; 
+      FadeState::cached_spec_stack.push_back(spec_key);
+      if (FadeState::debug)
+      std::cout <<  " base " << spec_key << " "<< n_input << " " << base_n_interventions << std::endl; 
       assert(FadeState::table_col_annotations[lop_info->table_name][col].size() == n_input);
       idx_t n_unique = FadeState::col_n_unique[spec_key];
       // TODO: do this once
@@ -236,6 +143,9 @@ idx_t InterventionSparse(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
     auto& in_ann =  fade_data[children_opid[0]].annotations;
     if (in_ann.empty()) return opid;
     vector<vector<idx_t>>& lineage = LineageState::lineage_global_store[qid_opid];
+    
+    fnode.n_output = lineage.size();
+
     //for (int i = 0; i < n_input; ++i) std::cout << " " <<  annotations_ptr[i];
     //std::cout << std::endl;
     // TODO: if aggid is provided, then only compute result for it
@@ -244,16 +154,14 @@ idx_t InterventionSparse(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
       idx_t col_idx = sub_agg.second->payload_idx;
       string& func = sub_agg.second->name;
       string out_key = sub_agg.first;
-    //  if (FadeState::debug)
+      if (FadeState::debug)
         std::cout << "[DEBUG]" << out_key << " " << func << " " << col_idx << " " << oids.size() << std::endl;
       for (int g=0; g < oids.size(); ++g) {
         int gid = oids[g].GetValue<int>();
-        std::cout << gid << " " << g << std::endl;
         sparse_incremental_bw(func, g, lineage[gid], in_ann,
-                              fnode.alloc_vars[out_key][thread_id],
+                              fnode.alloc_typ_vars[out_key].second[thread_id],
                               FadeState::input_data_map[qid_opid],
                               fnode.n_interventions, col_idx);
-        std::cout << " done " << std::endl; 
       }
     }
     return opid;
@@ -277,6 +185,27 @@ int get_output_opid(int query_id, idx_t operator_id) {
 
 }
 
+void reorder_between_root_and_agg(idx_t qid, idx_t opid, vector<Value>& oids) {
+  auto &lop_info = LineageState::qid_plans[qid][opid];
+  
+  if (lop_info->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
+    // iterate over bw, replace groups[i] = bw[ groups[i] ];
+    string qid_opid = to_string(qid) + "_" + to_string(opid);
+    vector<idx_t>& lineage = LineageState::lineage_global_store[qid_opid][0];
+    if (FadeState::debug)
+      std::cout << qid_opid << " AdjustOutputIds order by " << lineage.size() << std::endl;
+    for (idx_t i=0; i < oids.size(); ++i) {
+      int gid = oids[i].GetValue<int>();
+      oids[i] = Value::INTEGER( lineage[ gid ]);
+    }
+    return;
+  } 
+  
+  if (lop_info->children.empty()) { return; }
+
+  return reorder_between_root_and_agg(qid, lop_info->children[0], oids);
+}
+
 void WhatIfSparse(ClientContext& context, int qid, int aggid,
                   unordered_map<string, vector<string>>& spec_map,
                   vector<Value>& oids) {
@@ -290,16 +219,23 @@ void WhatIfSparse(ClientContext& context, int qid, int aggid,
   // 1.b holds post interventions output. n_output X n_interventions per worker
   PrepareAggsNodes(qid, root_id, aggid, fade_data, spec_map);
   
+  reorder_between_root_and_agg(qid, root_id, oids);
+
   // 3. Evaluate Interventions
   // 3.1 TODO: use workers
   InterventionSparse(qid, root_id, aggid, 0, fade_data, spec_map, oids);
   int output_opid = get_output_opid(qid, root_id);
-  std::cout << "output opid: " << output_opid << std::endl;
+  if (FadeState::debug) std::cout << "output opid: " << output_opid << std::endl;
+
+  if (output_opid < 0) return;
  
-  /* 
+  auto& fnode = fade_data[output_opid];
+
   // 4. store output in global storage to be accessed later by the user
-  FadeState::cached_fade_result = std::move(fade_data[output_opid]);
+  FadeState::fade_results[qid] = {(idx_t)output_opid, fnode.n_output,
+    fnode.n_interventions, std::move(oids),
+    std::move(fnode.alloc_typ_vars)
+  };
   std::cout << "done" << std::endl;
-  */
 }
 } // namespace duckdb
