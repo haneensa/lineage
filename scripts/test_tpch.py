@@ -9,6 +9,7 @@ from timeit import default_timer as timer
 parser = argparse.ArgumentParser(description='TPCH benchmarking script')
 parser.add_argument('--sf', type=float, help="sf scale", default=0.1)
 parser.add_argument('--qid', type=int, help="query", default=1)
+parser.add_argument('--aggid', type=int, help="aggid", default=0)
 parser.add_argument('--oid', type=int, help="oid", default=0)
 parser.add_argument('--debug', type=bool, help="debug", default=False)
 parser.add_argument('--folder', type=str, help='queries folder', default='queries/')
@@ -33,7 +34,10 @@ con.execute("PRAGMA threads=1")
 if args.debug:
     con.execute("PRAGMA set_debug_lineage(True)")
 con.execute("PRAGMA set_lineage(True)")
+start = timer()
 print(query)
+end = timer()
+print(end - start)
 print(con.execute(query).df())
 con.execute("PRAGMA set_lineage(False)")
 
@@ -63,17 +67,19 @@ end = timer()
 print(end - start)
 print(lineage)
 
-"""
 con.execute("PRAGMA PrepareFade(['lineitem.l_linestatus'])")
-agg_idx = 0
+
+print("===============")
+agg_idx = args.aggid
 oids = [0]
 con.execute(f"PRAGMA Whatif({qid}, {agg_idx}, {oids}, ['lineitem.l_linestatus'])")
+
+print("===============")
 
 start = timer()
 lineage = con.execute(f"select * from fade_reader({qid}, {agg_idx})").df()
 end = timer()
 print(end - start)
 print(lineage)
-"""
 
 con.execute("pragma clear_lineage")

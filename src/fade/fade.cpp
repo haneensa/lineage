@@ -11,7 +11,7 @@
 
 namespace duckdb {
 
-bool FadeState::debug;
+bool FadeState::debug = false;
 unordered_map<QID, FadeResult> FadeState::fade_results;
 unordered_map<QID_OPID, unordered_map<string, shared_ptr<SubAggsContext>>> FadeState::sub_aggs;
 unordered_map<QID_OPID, unordered_map<idx_t, shared_ptr<AggFuncContext>>> FadeState::aggs;
@@ -28,6 +28,8 @@ unordered_map<QID_OPID, unordered_map<int, pair<LogicalType, void*>>> FadeState:
 unordered_map<string, unordered_map<string, vector<int32_t>>> FadeState::table_col_annotations;
 unordered_map<string, idx_t> FadeState::col_n_unique;
 
+unordered_map<string, std::unordered_map<string, OutPayload>> FadeState::alloc_typ_vars;
+
 unordered_map<string, unique_ptr<MaterializedQueryResult>> FadeState::codes;
 unordered_map<string, vector<string>> FadeState::cached_spec_map;
 vector<string> FadeState::cached_spec_stack;
@@ -38,12 +40,44 @@ inline void PragmaWhatif(ClientContext &context, const FunctionParameters &param
 	int agg_idx = parameters.values[1].GetValue<int>();
   auto oids = ListValue::GetChildren(parameters.values[2]);
   auto spec_values = ListValue::GetChildren(parameters.values[3]);
-  std::cout << "WhatIf: " << qid << " " << agg_idx << " " << oids.size() << " " << spec_values.size() << std::endl;
   unordered_map<string, vector<string>> spec_map = parse_spec(spec_values);
   WhatIfSparse(context, qid, agg_idx, spec_map, oids);
-  // TODO: make it per qid?
   FadeState::cached_spec_map = std::move(spec_map);
 }
+
+// dense:
+// 1) input: intervention predicate  -> target matrix
+/* a) evaluate, b) construct target matrix
+    for v in [(1, 2), (3, 4), (5, 6), (7, 8), (9, 10), (10, 100000000000000000000000)]:
+        l = v[0]
+        r = v[1]
+        res = f"""(PIName IN (select PIName from (SELECT PIName, num
+                FROM (SELECT PIName, count(1) as num FROM Investigator GROUP BY PIName)
+                WHERE num >= {l} and num <= {r}))) as e{n}"""
+        exp_dict["Investigator"].append(res)
+        n += 1
+    
+    for v in [(0, 1), (1, 5), (5, 10), (10, 50), (50, 100), (100, 100000000000000000000000)]:
+        l = v[0]
+        r = v[1]
+        res = f"""(PIName IN (SELECT PIName FROM (SELECT i.PIName, sum(a.amount/1000000) as amt FROM Investigator i, Award a where i.aid=a.aid GROUP BY PIName
+                    HAVING amt >= {l} and amt < {r}))) as e{n}"""
+        exp_dict["Investigator"].append(res)
+        n += 1
+    
+    for v in [(0,  1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (7, 8), (8, 9), (9, 10), (10, 11), (11, 100000000000000000000000)]:
+        l = v[0]
+        r = v[1]
+        res = f"""(aid IN (SELECT aid FROM (SELECT aid, date_sub('year', strptime(startdate, '%m/%d/%Y'), strptime(enddate, '%m/%d/%Y')) as num_years 
+                 FROM Award WHERE num_years >= {l} and num_years < {r}))) as e{n}"""
+
+        exp_dict["Award"].append(res)
+        n += 1
+    M_pad = np.concatenate((prefix_extra_columns, I.to_numpy().astype(np.uint8), extra_columns), axis=1)
+    packed_array = np.packbits(M_pad, axis=1)
+*/
+// 2) memory allocation
+// 3) intervention evaluation
 
 // 1) prepapre_lineage: query id
 inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameters &parameters) {
@@ -52,6 +86,7 @@ inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameter
   std::cout << "PRAGMA PrepapreLineage: " << qid << " " << root_id << std::endl;
   InitGlobalLineage(qid, root_id);
   GetCachedVals(qid, root_id);
+  RecomputeAggs(qid, root_id);
 }
 
 inline void PragmaPrepareFade(ClientContext &context, const FunctionParameters &parameters) {

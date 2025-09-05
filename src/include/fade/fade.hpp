@@ -3,6 +3,9 @@
 #include "lineage/lineage_init.hpp"
 
 #include "duckdb.hpp"
+#include <immintrin.h>
+
+using Mask16 = __mmask16; //uint16_t; // __mmask16
 
 namespace duckdb {
 
@@ -13,7 +16,8 @@ struct FadeNode {
   idx_t n_input;
   idx_t n_output;
   idx_t num_worker;
-  vector<idx_t> annotations;
+  vector<idx_t> annotations;    // sparse
+	Mask16* del_interventions; // dense
 	std::unordered_map<string, OutPayload> alloc_typ_vars;
 };
 
@@ -43,6 +47,9 @@ struct SubAggsContext {
     name(name), return_type(return_type), payload_idx(payload_idx), parent_idx(parent_idx) {}
 };
 
+void reorder_between_root_and_agg(idx_t qid, idx_t opid, vector<Value>& oids);
+pair<int, int> get_start_end(int row_count, int thread_id, int num_worker);
+int get_output_opid(int query_id, idx_t operator_id);
 
 
 /* helpers to init state for fade */
@@ -55,8 +62,7 @@ idx_t InitGlobalLineage(idx_t qid, idx_t opid);
 void GetCachedVals(idx_t qid, idx_t opid);
 
 idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
-                      unordered_map<idx_t, FadeNode>& fade_data,
-                      unordered_map<string, vector<string>>& spec_map);
+                      unordered_map<idx_t, FadeNode>& fade_data);
 
 idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
                       unordered_map<idx_t, FadeNode>& fade_data,
@@ -88,6 +94,7 @@ void sparse_incremental_bw(string func, const int g, const vector<idx_t>& bw_lin
                           unordered_map<int, pair<LogicalType, void*>>& input_data_map,
                           int n_interventions, int col_idx);
 
+void RecomputeAggs(idx_t qid, idx_t opid);
 
 // to evaluate all, iterate over aggs
 // else, aggs[offset]
@@ -114,6 +121,8 @@ struct FadeState {
   static unordered_map<string, unique_ptr<MaterializedQueryResult>> codes;
   static unordered_map<string, vector<string>> cached_spec_map;
   static vector<string> cached_spec_stack;
+	
+  static unordered_map<string, std::unordered_map<string, OutPayload>> alloc_typ_vars;
 };
 
 } // namespace duckdb

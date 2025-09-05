@@ -125,16 +125,15 @@ void read_annotations(ClientContext &context, unordered_map<string, vector<strin
 }
 
 template<class IN_T, class OUT_T>
-void allocate_total_agg_output(string fname, FadeNode& fnode, string qid_opid, idx_t col_idx,
+void allocate_total_agg_output(string fname, string qid_opid, idx_t col_idx,
     int n_output, string out_var) {
-	fnode.alloc_typ_vars[out_var].second[0] = malloc(sizeof(OUT_T) * n_output * 1 /*n_interventions*/);
-	memset(fnode.alloc_typ_vars[out_var].second[0], 0, sizeof(OUT_T) * n_output * 1 /*n_interventions*/);
+  FadeState::alloc_typ_vars[qid_opid][out_var].second[0] = malloc(sizeof(OUT_T) * n_output * 1 /*n_interventions*/);
+	memset(FadeState::alloc_typ_vars[qid_opid][out_var].second[0], 0, sizeof(OUT_T) * n_output * 1 /*n_interventions*/);
   vector<vector<idx_t>>& lineage = LineageState::lineage_global_store[qid_opid];
-  OUT_T* out = (OUT_T*)fnode.alloc_typ_vars[out_var].second[0];
+  OUT_T* out = (OUT_T*)FadeState::alloc_typ_vars[qid_opid][out_var].second[0];
   if (fname == "count") {
     for (idx_t oid=0; oid < lineage.size(); ++oid) {
       out[oid] = lineage[oid].size();
-     //  std::cout << qid_opid << " count -> " << oid << " " << lineage[oid].size() << " " << out[oid] << std::endl;
     }
   } else if (fname == "sum") {
     IN_T *in_arr = reinterpret_cast<IN_T *>(FadeState::input_data_map[qid_opid][col_idx].second);
@@ -142,10 +141,7 @@ void allocate_total_agg_output(string fname, FadeNode& fnode, string qid_opid, i
       for (idx_t i=0; i < lineage[oid].size(); ++i) {
         idx_t iid = lineage[oid][i];
         out[oid] +=  in_arr[iid];
-        // std::cout << "(" << oid << ":" << iid << ":" << in_arr[iid] << ")";
       }
-      //std::cout << std::endl;
-     // std::cout << qid_opid << " " << " sum -> " << oid << " " << out[oid] << std::endl;
     }
   } else if (fname == "sum_2") {
     IN_T *in_arr = reinterpret_cast<IN_T *>(FadeState::input_data_map[qid_opid][col_idx].second);
@@ -154,11 +150,42 @@ void allocate_total_agg_output(string fname, FadeNode& fnode, string qid_opid, i
         idx_t iid = lineage[oid][i];
         out[oid] +=  (in_arr[iid] * in_arr[iid]);
       }
-     // std::cout << qid_opid << " " << " sum_2 -> " << oid << " " << out[oid] << std::endl;
     }
   }
 
 }
+
+void RecomputeAggs(idx_t qid, idx_t opid) {
+  auto &lop_info = LineageState::qid_plans[qid][opid];
+  for (auto &child : lop_info->children) {
+    RecomputeAggs(qid, child);
+  }
+
+  string qid_opid = to_string(qid) + "_" + to_string(opid);
+
+  switch (lop_info->type) {
+   case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
+      int n_output = lop_info->n_output;
+      for (auto &sub_agg : FadeState::sub_aggs[qid_opid]) {
+        auto &typ = sub_agg.second->return_type;
+        idx_t col_idx = sub_agg.second->payload_idx;
+        string& func = sub_agg.second->name;
+        string out_key = "total_" + sub_agg.first;
+        if (FadeState::debug)  std::cout << "aggs => " << out_key << std::endl;
+        FadeState::alloc_typ_vars[qid_opid][out_key].second.assign(1 /* num_worker */, 0);
+        FadeState::alloc_typ_vars[qid_opid][out_key].first = LogicalType::FLOAT;
+        if (func == "count") {
+          FadeState::alloc_typ_vars[qid_opid][out_key].first = LogicalType::INTEGER;
+          allocate_total_agg_output<int, int>(func, qid_opid, col_idx, n_output, out_key);
+        } else if (FadeState::input_data_map[qid_opid][col_idx].first == LogicalType::INTEGER) {
+          allocate_total_agg_output<int, float>(func, qid_opid, col_idx, n_output, out_key);
+        } else {
+          allocate_total_agg_output<float, float>(func, qid_opid, col_idx, n_output, out_key);
+        }
+      }
+   } default: {}}
+}
+
 
 // separate selection vector allocation for sparse and dense
 idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
@@ -189,7 +216,6 @@ idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
       idx_t n_input = FadeState::table_count[lop_info->table_name];
       for (const string  &col : spec_iter->second) {
         string spec_key = lop_info->table_name + "." + col;
-        std::cout << spec_key << std::endl;
         fnode.n_interventions *= FadeState::col_n_unique[spec_key];
       }
       fnode.annotations.assign(n_input, 0); // TODO: if spec is single array, avoid this
@@ -214,24 +240,6 @@ idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
       if (fnode.n_interventions > 1) fnode.annotations.assign(lop_info->n_output, 0);
       return opid;
    } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
-      int n_output = lop_info->n_output;
-      for (auto &sub_agg : FadeState::sub_aggs[qid_opid]) {
-        auto &typ = sub_agg.second->return_type;
-        idx_t col_idx = sub_agg.second->payload_idx;
-        string& func = sub_agg.second->name;
-        string out_key = "total_" + sub_agg.first;
-        if (FadeState::debug)  std::cout << "aggs => " << out_key << std::endl;
-        fnode.alloc_typ_vars[out_key].second.assign(1 /* num_worker */, 0);
-        fnode.alloc_typ_vars[out_key].first = LogicalType::FLOAT;
-        if (func == "count") {
-          fnode.alloc_typ_vars[out_key].first = LogicalType::INTEGER;
-          allocate_total_agg_output<int, int>(func, fnode, qid_opid, col_idx, n_output, out_key);
-        } else if (FadeState::input_data_map[qid_opid][col_idx].first == LogicalType::INTEGER) {
-          allocate_total_agg_output<int, float>(func, fnode, qid_opid, col_idx, n_output, out_key);
-        } else {
-          allocate_total_agg_output<float, float>(func, fnode, qid_opid, col_idx, n_output, out_key);
-        }
-      }
       return opid;
    } default: {}}
 

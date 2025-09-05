@@ -152,7 +152,7 @@ void IReader<CountTag>(string qid_opid, idx_t out_var, FadeResult& fnode,
   int* col_data = (int*)output.data[col].GetData();
   string count_agg_key = agg_context->sub_aggs[0];
   string total_count = "total_" + count_agg_key;
-  int* count_vals = ((int*)fnode.alloc_typ_vars[total_count].second[0]);
+  int* count_vals = ((int*)FadeState::alloc_typ_vars[qid_opid][total_count].second[0]);
   int count_val = count_vals[row];
   int* count_ptr = (int*)fnode.alloc_typ_vars[count_agg_key].second[0];
   
@@ -172,7 +172,7 @@ void IReader<SumTag>(string qid_opid, idx_t out_var, FadeResult& fnode,
   string sum_agg_key = agg_context->sub_aggs[0];
   void* data_ptr = fnode.alloc_typ_vars[sum_agg_key].second[0];
   string total_sum = "total_" + sum_agg_key;
-  float sum_val = ((float*)fnode.alloc_typ_vars[total_sum].second[0])[row];
+  float sum_val = ((float*)FadeState::alloc_typ_vars[qid_opid][total_sum].second[0])[row];
   
   if (FadeState::debug)
   std::cout << "sum: " <<  qid_opid << " " << row << "  aggs => " << total_sum << " " << sum_val << std::endl;
@@ -197,8 +197,8 @@ void IReader<AvgTag>(string qid_opid, idx_t out_var, FadeResult& fnode,
   string total_sum = "total_" + sum_agg_key;
   string total_count = "total_" + count_agg_key;
 
-  int count_val = ((int*)fnode.alloc_typ_vars[total_count].second[0])[row];
-  float sum_val = ((float*)fnode.alloc_typ_vars[total_sum].second[0])[row];
+  int count_val = ((int*)FadeState::alloc_typ_vars[qid_opid][total_count].second[0])[row];
+  float sum_val = ((float*)FadeState::alloc_typ_vars[qid_opid][total_sum].second[0])[row];
   
   if (FadeState::debug)
   std::cout << "avg: " <<  qid_opid << " " << row << "  aggs => " << total_count << " " << sum_val << " " << count_val << std::endl;
@@ -229,9 +229,9 @@ void IReader<StdvTag>(string qid_opid, idx_t out_var, FadeResult& fnode,
   string total_sum_2 = "total_" + sum_2_agg_key;
   string total_count = "total_" + count_agg_key;
 
-  int count_val = ((int*)fnode.alloc_typ_vars[total_count].second[0])[row];
-  float sum_2_val = ((float*)fnode.alloc_typ_vars[total_sum_2].second[0])[row];
-  float sum_val = ((float*)fnode.alloc_typ_vars[total_sum].second[0])[row];
+  int count_val = ((int*)FadeState::alloc_typ_vars[qid_opid][total_count].second[0])[row];
+  float sum_2_val = ((float*)FadeState::alloc_typ_vars[qid_opid][total_sum_2].second[0])[row];
+  float sum_val = ((float*)FadeState::alloc_typ_vars[qid_opid][total_sum].second[0])[row];
 
   void* sum_ptr = fnode.alloc_typ_vars[sum_agg_key].second[0];
   float* sum_2_ptr = (float*)fnode.alloc_typ_vars[sum_2_agg_key].second[0]; 

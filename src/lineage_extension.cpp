@@ -57,7 +57,6 @@ inline void PragmaClearLineage(ClientContext &context, const FunctionParameters 
   }
   FadeState::input_data_map.clear();
 
-  std::cout << "pre done" << std::endl;
   for (auto& fade_res : FadeState::fade_results) {
     for (auto& vars : fade_res.second.alloc_typ_vars) {
       for (auto & vars_t : vars.second.second) {
@@ -69,7 +68,6 @@ inline void PragmaClearLineage(ClientContext &context, const FunctionParameters 
       }
     }
   }
-  std::cout << "done" << std::endl;
 
   FadeState::fade_results.clear();
 
@@ -98,7 +96,7 @@ void LineageExtension::Load(DuckDB &db) {
       if (LineageState::debug)
         std::cout << "Plan prior to modifications: \n" << plan->ToString() << std::endl;
       plan = AddLineage(input, plan);
-      //if (LineageState::debug)
+      if (LineageState::debug)
         std::cout << "Plan after to modifications: \n" << plan->ToString() << std::endl;
     };
 

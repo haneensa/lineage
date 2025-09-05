@@ -54,12 +54,12 @@ public:
     
     string table_name = to_string(query_id) + "_" + to_string(operator_id); // + "_" + to_string(partition_id);
 
-    //if (LineageState::debug) {
+    if (LineageState::debug) {
       std::cout << "[DEBUG] <persist lineage> partition_id" << partition_id << " "
         << "qid_opid:" <<  table_name  << ", left len: " << lineage.size()
         << ", right len: " << lineage_right.size() << ", type: "
         << EnumUtil::ToChars<LogicalOperatorType>(this->dependent_type) << std::endl;
-  //  }
+   }
 
     if (LineageState::lineage_store[table_name].size()) return;
     LineageState::lineage_store[table_name] = std::move(lineage);

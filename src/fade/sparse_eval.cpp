@@ -5,15 +5,6 @@
 
 namespace duckdb {
 
-pair<int, int> get_start_end(int row_count, int thread_id, int num_worker) {
-	int batch_size = row_count / num_worker;
-	if (row_count % num_worker > 0) batch_size++;
-	int start = thread_id * batch_size;
-	int end   = start + batch_size;
-	if (end >= row_count)  end = row_count;
-	return std::make_pair(start, end);
-}
-
 // lineage: 1D backward lineage
 // var: sparse input intervention matrix
 // out: sparse output intervention matrix
@@ -146,8 +137,6 @@ idx_t InterventionSparse(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
     
     fnode.n_output = lineage.size();
 
-    //for (int i = 0; i < n_input; ++i) std::cout << " " <<  annotations_ptr[i];
-    //std::cout << std::endl;
     // TODO: if aggid is provided, then only compute result for it
     for (auto &sub_agg : FadeState::sub_aggs[qid_opid]) {
       auto &typ = sub_agg.second->return_type;
@@ -170,60 +159,40 @@ idx_t InterventionSparse(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
   return 100000;
 }
 
-int get_output_opid(int query_id, idx_t operator_id) {
-  auto &lop_info = LineageState::qid_plans[query_id][operator_id];
-  if (lop_info->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-    return operator_id;
-  }
-
-  for (auto &child : lop_info->children) {
-    auto child_opid = get_output_opid(query_id, child);
-    if (child_opid >= 0) return child_opid;
-  }
-
-  return -1;
-
-}
-
-void reorder_between_root_and_agg(idx_t qid, idx_t opid, vector<Value>& oids) {
-  auto &lop_info = LineageState::qid_plans[qid][opid];
-  
-  if (lop_info->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
-    // iterate over bw, replace groups[i] = bw[ groups[i] ];
-    string qid_opid = to_string(qid) + "_" + to_string(opid);
-    vector<idx_t>& lineage = LineageState::lineage_global_store[qid_opid][0];
-    if (FadeState::debug)
-      std::cout << qid_opid << " AdjustOutputIds order by " << lineage.size() << std::endl;
-    for (idx_t i=0; i < oids.size(); ++i) {
-      int gid = oids[i].GetValue<int>();
-      oids[i] = Value::INTEGER( lineage[ gid ]);
-    }
-    return;
-  } 
-  
-  if (lop_info->children.empty()) { return; }
-
-  return reorder_between_root_and_agg(qid, lop_info->children[0], oids);
-}
-
 void WhatIfSparse(ClientContext& context, int qid, int aggid,
                   unordered_map<string, vector<string>>& spec_map,
                   vector<Value>& oids) {
   if (LineageState::qid_plans_roots.find(qid) == LineageState::qid_plans_roots.end()) return;
+	std::chrono::steady_clock::time_point start_time, end_time;
+	std::chrono::duration<double> time_span;
   
   unordered_map<idx_t, FadeNode> fade_data;
   idx_t root_id = LineageState::qid_plans_roots[qid];
 
+	start_time = std::chrono::steady_clock::now();
+
+  // unique per spec
   // 1.a traverse query plan, allocate fade nodes, and any memory allocation
   PrepareSparseFade(qid, root_id, aggid, fade_data, spec_map);
   // 1.b holds post interventions output. n_output X n_interventions per worker
   PrepareAggsNodes(qid, root_id, aggid, fade_data, spec_map);
-  
+
   reorder_between_root_and_agg(qid, root_id, oids);
+	end_time = std::chrono::steady_clock::now();
+	time_span = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time);
+	double post_processing_time = time_span.count();
+  std::cout << "end post process " << post_processing_time <<std::endl;
+  
 
   // 3. Evaluate Interventions
   // 3.1 TODO: use workers
+	start_time = std::chrono::steady_clock::now();
   InterventionSparse(qid, root_id, aggid, 0, fade_data, spec_map, oids);
+	end_time = std::chrono::steady_clock::now();
+	time_span = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time);
+	double eval_time = time_span.count();
+  std::cout << "end eval " << eval_time <<std::endl;
+
   int output_opid = get_output_opid(qid, root_id);
   if (FadeState::debug) std::cout << "output opid: " << output_opid << std::endl;
 
@@ -236,6 +205,5 @@ void WhatIfSparse(ClientContext& context, int qid, int aggid,
     fnode.n_interventions, std::move(oids),
     std::move(fnode.alloc_typ_vars)
   };
-  std::cout << "done" << std::endl;
 }
 } // namespace duckdb

@@ -10,6 +10,52 @@
 
 namespace duckdb {
 
+int get_output_opid(int query_id, idx_t operator_id) {
+  auto &lop_info = LineageState::qid_plans[query_id][operator_id];
+  if (lop_info->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
+    return operator_id;
+  }
+
+  for (auto &child : lop_info->children) {
+    auto child_opid = get_output_opid(query_id, child);
+    if (child_opid >= 0) return child_opid;
+  }
+
+  return -1;
+
+}
+
+void reorder_between_root_and_agg(idx_t qid, idx_t opid, vector<Value>& oids) {
+  auto &lop_info = LineageState::qid_plans[qid][opid];
+  
+  if (lop_info->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
+    // iterate over bw, replace groups[i] = bw[ groups[i] ];
+    string qid_opid = to_string(qid) + "_" + to_string(opid);
+    vector<idx_t>& lineage = LineageState::lineage_global_store[qid_opid][0];
+    if (FadeState::debug)
+      std::cout << qid_opid << " AdjustOutputIds order by " << lineage.size() << std::endl;
+    for (idx_t i=0; i < oids.size(); ++i) {
+      int gid = oids[i].GetValue<int>();
+      oids[i] = Value::INTEGER( lineage[ gid ]);
+    }
+    return;
+  } 
+  
+  if (lop_info->children.empty()) { return; }
+
+  return reorder_between_root_and_agg(qid, lop_info->children[0], oids);
+}
+
+pair<int, int> get_start_end(int row_count, int thread_id, int num_worker) {
+	int batch_size = row_count / num_worker;
+	if (row_count % num_worker > 0) batch_size++;
+	int start = thread_id * batch_size;
+	int end   = start + batch_size;
+	if (end >= row_count)  end = row_count;
+	return std::make_pair(start, end);
+}
+
+
 idx_t InitGlobalLineage(idx_t qid, idx_t opid) {
   auto &lop_info = LineageState::qid_plans[qid][opid];
   vector<idx_t> children_opid;
@@ -138,10 +184,11 @@ void ExtractAggsContext(string qid_opid, unique_ptr<Expression>& expr,
   
   if (add_count) {
     FadeState::sub_aggs[qid_opid]["count"] = make_shared_ptr<SubAggsContext>("count", LogicalType::INTEGER, 0, 0);
-    if (name == "count" || name == "count_star") {
-      vector<string> sub_aggs_list = {"count"};
-      FadeState::aggs[qid_opid][key] = make_shared_ptr<AggFuncContext>("count", LogicalType::INTEGER, std::move(sub_aggs_list));
-    }
+  }
+  if (name == "count" || name == "count_star") {
+    std::cout << "---> count idx: " << key << std::endl;
+    vector<string> sub_aggs_list = {"count"};
+    FadeState::aggs[qid_opid][key] = make_shared_ptr<AggFuncContext>("count", LogicalType::INTEGER, std::move(sub_aggs_list));
   }
 }
 
@@ -153,16 +200,7 @@ void InitAggInfo(string qid_opid, vector<unique_ptr<Expression>>& aggs,
   // -1 excluding the lineage capture function
   for (idx_t i=0;  i < aggs.size()-1; ++i) {
     auto &agg_expr = aggs[i]->Cast<BoundAggregateExpression>();
-    if (agg_expr.function.name == "count" || agg_expr.function.name == "count_star") include_count = true;
     ExtractAggsContext(qid_opid, aggs[i], payload_types, i);
-  }
-  
-  // none of the aggregates added. do we need it?
-  auto count_iter = FadeState::sub_aggs[qid_opid].find("count");
-  idx_t key = aggs.size();
-  if (!include_count && count_iter != FadeState::sub_aggs[qid_opid].end()) {
-    vector<string> sub_aggs_list = {"count"};
-    FadeState::aggs[qid_opid][key] = make_shared_ptr<AggFuncContext>("count", LogicalType::INTEGER, std::move(sub_aggs_list));
   }
 }
 
@@ -271,12 +309,11 @@ void allocate_agg_output(FadeNode& fnode, idx_t t, idx_t n_interventions,
 
 
 idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
-                      unordered_map<idx_t, FadeNode>& fade_data,
-                      unordered_map<string, vector<string>>& spec_map) {
+                      unordered_map<idx_t, FadeNode>& fade_data) {
   auto &lop_info = LineageState::qid_plans[qid][opid];
   vector<idx_t> children_opid;
   for (auto &child : lop_info->children) {
-   idx_t cid = PrepareAggsNodes(qid, child, agg_idx, fade_data, spec_map);
+   idx_t cid = PrepareAggsNodes(qid, child, agg_idx, fade_data);
    children_opid.emplace_back(cid);
   }
 
