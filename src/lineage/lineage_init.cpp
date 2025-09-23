@@ -60,7 +60,7 @@ idx_t ProcessJoin(unique_ptr<LogicalOperator> &op, vector<idx_t>& rowids, idx_t 
   
   if (join.join_type == JoinType::RIGHT_SEMI || join.join_type == JoinType::RIGHT_ANTI) {
     if (LineageState::debug)
-    std::cout << "inject right semi join: " << rowids[1] << " " << join.right_projection_map.size() << std::endl;
+      std::cout << "inject right semi join: " << rowids[1] << " " << join.right_projection_map.size() << std::endl;
     if (!join.right_projection_map.empty()) {
       right_col_id = join.right_projection_map.size();
       join.right_projection_map.push_back(rowids[1]);
@@ -69,7 +69,7 @@ idx_t ProcessJoin(unique_ptr<LogicalOperator> &op, vector<idx_t>& rowids, idx_t 
     }
 
     if (LineageState::debug)
-    std::cout << "-> " << left_col_id + right_col_id << " " << left_col_id << " " << right_col_id << " " << rowids[0] << " " << rowids[1] << " "
+      std::cout << "-> " << left_col_id + right_col_id << " " << left_col_id << " " << right_col_id << " " << rowids[0] << " " << rowids[1] << " "
       << join.left_projection_map.size() << " " << join.right_projection_map.size() << std::endl;
     int source_count = 1;
     auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id,
@@ -89,8 +89,8 @@ idx_t ProcessJoin(unique_ptr<LogicalOperator> &op, vector<idx_t>& rowids, idx_t 
    if (join.join_type == JoinType::SEMI
           || join.join_type == JoinType::ANTI
           || join.join_type == JoinType::MARK) {
-      if (LineageState::debug)
-    std::cout << "inject shortcut join: " << left_col_id << " " << join.left_projection_map.size() << std::endl;
+    if (LineageState::debug)
+      std::cout << "inject shortcut join: " << left_col_id << " " << join.left_projection_map.size() << std::endl;
     int source_count = 1;
     auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
         op->type, source_count, left_col_id, 0);
@@ -395,18 +395,19 @@ unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,
   // inject lineage op at the root of the plan to extract any annotation columns
   // If root is create table, then add lineage operator below it
   if (LineageState::debug) std::cout << "Annotation Column: " << final_rowid << ", Operator Id: " << cur_op_id << std::endl;
-  idx_t root_id = pointer_to_opid[(void*)plan->children[0].get()];
+  if (LineageState::debug) std::cout << "root -> " << EnumUtil::ToChars<LogicalOperatorType>(plan->type) << std::endl;
+  idx_t root_id = pointer_to_opid[(void*)plan.get()];
   auto root = make_uniq<LogicalLineageOperator>(plan->estimated_cardinality,
-      root_id, query_id, plan->children[0]->type, 1/*src_cnt*/, final_rowid, 0, true);
+      root_id, query_id, plan->type, 1/*src_cnt*/, final_rowid, 0, true);
   LineageState::qid_plans_roots[query_id] = root->operator_id;
-  if (plan->type == LogicalOperatorType::LOGICAL_CREATE_TABLE) {
+  /*if (plan->type == LogicalOperatorType::LOGICAL_CREATE_TABLE) {
     auto child = std::move(plan->children[0]);
     root->AddChild(std::move(child));
     plan->children[0] = std::move(root);
-  } else {
-    root->AddChild(std::move(plan));
-    plan = std::move(root);
-  }
+  }*/
+  
+  root->AddChild(std::move(plan));
+  plan = std::move(root);
   
   int sink_id = -1;
   PostAnnotate(query_id, root_id, sink_id);

@@ -175,7 +175,7 @@ void WhatIfSparse(ClientContext& context, int qid, int aggid,
   // 1.a traverse query plan, allocate fade nodes, and any memory allocation
   PrepareSparseFade(qid, root_id, aggid, fade_data, spec_map);
   // 1.b holds post interventions output. n_output X n_interventions per worker
-  PrepareAggsNodes(qid, root_id, aggid, fade_data, spec_map);
+  PrepareAggsNodes(qid, root_id, aggid, fade_data);
 
   reorder_between_root_and_agg(qid, root_id, oids);
 	end_time = std::chrono::steady_clock::now();

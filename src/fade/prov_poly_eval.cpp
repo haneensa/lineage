@@ -133,13 +133,13 @@ idx_t PolyEval(ClientContext &context, string model, idx_t qid, idx_t opid, idx_
           std::cerr << "Query failed: " << (result ? result->GetError() : "null result") << std::endl;
       }
       idx_t count = result->GetValue(0, 0).GetValue<idx_t>();
-      std::cout << lop_info->table_name << " " << query << " " << count << std::endl;
+      if (LineageState::debug) std::cout << lop_info->table_name << " " << query << " " << count << std::endl;
       scan_eval(annotations_per_opid[opid], count, lop_info->table_name);
       return opid;
     } case LogicalOperatorType::LOGICAL_PROJECTION: {
-      return children_opid[0];
-    } case LogicalOperatorType::LOGICAL_FILTER:
-      case LogicalOperatorType::LOGICAL_ORDER_BY: {
+      case LogicalOperatorType::LOGICAL_FILTER:
+      case LogicalOperatorType::LOGICAL_TOP_N:
+      case LogicalOperatorType::LOGICAL_ORDER_BY:
       if (!lop_info->has_lineage) return children_opid[0];
       vector<idx_t>& lineage = LineageState::lineage_global_store[ltable][0];
       auto& in_ann =  annotations_per_opid[children_opid[0]];
@@ -153,7 +153,7 @@ idx_t PolyEval(ClientContext &context, string model, idx_t qid, idx_t opid, idx_
       auto& lhs_ann =  annotations_per_opid[children_opid[0]];
       auto& rhs_ann =  annotations_per_opid[children_opid[1]];
       auto& out_ann =  annotations_per_opid[opid];
-      std::cout << lhs_lineage.size() << " " << rhs_lineage.size()
+      if (LineageState::debug) std::cout << lhs_lineage.size() << " " << rhs_lineage.size()
         << " " << lhs_ann.size() << " " << rhs_ann.size() << " " << out_ann.size()
         << " " << children_opid[0] << " " << children_opid[1] << std::endl;
       out_ann.resize(lhs_lineage.size());
@@ -185,17 +185,19 @@ unique_ptr<FunctionData> PolyEvalFunction::PolyEvalBind(ClientContext &context, 
   // TODO: set output of eval to the type based on the annotationi and SUM and MUL operations over them
   auto result = make_uniq<PolyEvalBindData>();
   result->qid = input.inputs[0].GetValue<idx_t>();
-  result->model = "formula";
+  result->model = input.inputs[1].GetValue<string>(); // "formula";
+  if (LineageState::debug) std::cout << "PolyEvalBind: " << result->qid << " " << result->model << std::endl;
 
   names.emplace_back("out_rowid");
   return_types.emplace_back(LogicalType::ROW_TYPE);
 
-  names.emplace_back("count");
-  return_types.emplace_back(LogicalType::INTEGER);
-
-  names.emplace_back("formula");
-  return_types.emplace_back(LogicalType::VARCHAR);
-  
+  if (result->model == "count") {
+    names.emplace_back("count");
+    return_types.emplace_back(LogicalType::INTEGER);
+  } else {
+    names.emplace_back("formula");
+    return_types.emplace_back(LogicalType::VARCHAR);
+  }
   return std::move(result);
 }
 
@@ -204,22 +206,24 @@ void PolyEvalFunction::PolyEvalImplementation(ClientContext &context, TableFunct
   idx_t count = 0;
   // if eval type is string, else if int, else ?
   auto &gstate = data_p.global_state->Cast<PolyEvalGlobalState>();
+  idx_t remaining = 0;
     
-  idx_t remaining = gstate.annotation.size() - gstate.offset;
-  count = remaining  > STANDARD_VECTOR_SIZE ? STANDARD_VECTOR_SIZE : remaining;
-    
-  output.data[0].Sequence(gstate.offset, 1, count);
-
-  data_ptr_t ptr = (data_ptr_t)(gstate.annotation.data() + gstate.offset);
-  Vector in_index(LogicalType::INTEGER, ptr);
-  output.data[1].Reference(in_index);
-    
-  auto &vec = output.data[2];
-  auto data = FlatVector::GetData<string_t>(vec);
-  for (idx_t i = 0; i < gstate.formula.size(); ++i) {
-    data[i] = StringVector::AddString(vec, gstate.formula[i]);
+  if (bind_data.model == "count") {
+    remaining = gstate.annotation.size() - gstate.offset;
+    data_ptr_t ptr = (data_ptr_t)(gstate.annotation.data() + gstate.offset);
+    Vector in_index(LogicalType::INTEGER, ptr);
+    output.data[1].Reference(in_index);
+  } else {
+    remaining = gstate.formula.size() - gstate.offset;
+    auto &vec = output.data[1];
+    auto data = FlatVector::GetData<string_t>(vec);
+    for (idx_t i = 0; i < gstate.formula.size(); ++i) {
+      data[i] = StringVector::AddString(vec, gstate.formula[i]);
+    }
   }
-  
+
+  count = remaining  > STANDARD_VECTOR_SIZE ? STANDARD_VECTOR_SIZE : remaining;
+  output.data[0].Sequence(gstate.offset, 1, count);
   gstate.offset += count;
   output.SetCardinality(count);
 }
@@ -230,11 +234,15 @@ unique_ptr<GlobalTableFunctionState> PolyEvalFunction::PolyEvalInit(ClientContex
   auto &bind_data = input.bind_data->CastNoConst<PolyEvalBindData>();
   idx_t last_qid = LineageState::qid_plans_roots.size()-1;
   idx_t root_id = LineageState::qid_plans_roots[last_qid];
-  
+  idx_t out_opid = 0;
   std::unordered_map<idx_t, vector<string>> formula_per_opid;
   std::unordered_map<idx_t, vector<int>> annotations_per_opid;
-  PolyEval(context, bind_data.model, last_qid, root_id, 0 /*wid*/, annotations_per_opid);
-  idx_t out_opid = PolyEval(context, bind_data.model, last_qid, root_id, 0 /*wid*/, formula_per_opid);
+
+  if (bind_data.model == "count") {
+    out_opid = PolyEval(context, bind_data.model, last_qid, root_id, 0 /*wid*/, annotations_per_opid);
+  } else {
+    out_opid = PolyEval(context, bind_data.model, last_qid, root_id, 0 /*wid*/, formula_per_opid);
+  }
 
   if (LineageState::debug) std::cout << "root -> " << out_opid << std::endl;
   return make_uniq<PolyEvalGlobalState>(std::move(annotations_per_opid[out_opid]),

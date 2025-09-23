@@ -45,6 +45,17 @@ inline void PragmaWhatif(ClientContext &context, const FunctionParameters &param
   FadeState::cached_spec_map = std::move(spec_map);
 }
 
+inline void PragmaWhatifDense(ClientContext &context, const FunctionParameters &parameters) {
+	int qid = parameters.values[0].GetValue<int>();
+	int agg_idx = parameters.values[1].GetValue<int>();
+  auto oids = ListValue::GetChildren(parameters.values[2]);
+  auto spec_values = ListValue::GetChildren(parameters.values[3]);
+  unordered_map<string, vector<string>> spec_map = parse_spec(spec_values);
+  if (FadeState::debug) std::cout << "****** whatifdense *******" << std::endl;
+  WhatIfDense(context, qid, agg_idx, spec_map, oids);
+}
+
+
 // dense:
 // 1) input: intervention predicate  -> target matrix
 /* a) evaluate, b) construct target matrix
@@ -83,19 +94,24 @@ inline void PragmaWhatif(ClientContext &context, const FunctionParameters &param
 inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameters &parameters) {
 	int qid = parameters.values[0].GetValue<int>();
   idx_t root_id = LineageState::qid_plans_roots[qid];
-  std::cout << "PRAGMA PrepapreLineage: " << qid << " " << root_id << std::endl;
+  if (LineageState::debug) std::cout << "PRAGMA PrepapreLineage: " << qid << " " << root_id << 
+  " " << EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][root_id]->type)
+  << std::endl;
   InitGlobalLineage(qid, root_id);
-  GetCachedVals(qid, root_id);
-  RecomputeAggs(qid, root_id);
 }
 
 inline void PragmaPrepareFade(ClientContext &context, const FunctionParameters &parameters) {
   auto spec_values = ListValue::GetChildren(parameters.values[0]);
-  std::cout << "PRAGMA PrepapreFade: " << spec_values.size() << std::endl;
+  if (FadeState::debug) std::cout << "PRAGMA PrepapreFade: " << spec_values.size() << std::endl;
   // 1. Parse: spec. Input (t.col1|t.col2|..)
   unordered_map<string, vector<string>> spec_map = parse_spec(spec_values);
   // 2. Read: annotations
   read_annotations(context, spec_map);
+  
+	int qid = 0; //parameters.values[0].GetValue<int>();
+  idx_t root_id = LineageState::qid_plans_roots[qid];
+  GetCachedVals(qid, root_id);
+  RecomputeAggs(qid, root_id);
 }
 
 
@@ -129,6 +145,11 @@ void InitFuncs(DatabaseInstance& db_instance) {
         PragmaWhatif, {LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::LIST(LogicalType::INTEGER),
         LogicalType::LIST(LogicalType::VARCHAR)});
     ExtensionUtil::RegisterFunction(db_instance, whatif_fun);
+    
+    auto whatif_dense_fun = PragmaFunction::PragmaCall("WhatifDense",
+        PragmaWhatifDense, {LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::LIST(LogicalType::INTEGER),
+        LogicalType::LIST(LogicalType::VARCHAR)});
+    ExtensionUtil::RegisterFunction(db_instance, whatif_dense_fun);
 }
 
 

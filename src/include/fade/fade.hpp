@@ -17,7 +17,7 @@ struct FadeNode {
   idx_t n_output;
   idx_t num_worker;
   vector<idx_t> annotations;    // sparse
-	Mask16* del_interventions; // dense
+	Mask16* target_matrix; // dense
 	std::unordered_map<string, OutPayload> alloc_typ_vars;
 };
 
@@ -77,7 +77,11 @@ template<class T>
 void allocate_agg_output(FadeNode& fnode, idx_t t, idx_t n_interventions,
     int n_output, string out_var);
 
-// TODO: dense helpers
+// dense helpers
+void WhatIfDense(ClientContext& context, int qid, int aggid,
+                 unordered_map<string, vector<string>>& spec_map,
+                 vector<Value>& oids);
+
 // TODO: make a plan for specializations (code gen)
 
 // sparse helpers

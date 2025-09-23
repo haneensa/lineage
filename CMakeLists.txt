@@ -28,6 +28,7 @@ set(EXTENSION_SOURCES
     src/fade/fade.cpp
     src/fade/fade_reader.cpp
     src/fade/get_predicates.cpp
+    src/fade/dense_helper.cpp
     src/fade/sparse_helper.cpp
     src/fade/sparse_aggs.cpp
     src/fade/sparse_eval.cpp

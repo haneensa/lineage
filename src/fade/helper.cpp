@@ -58,26 +58,26 @@ pair<int, int> get_start_end(int row_count, int thread_id, int num_worker) {
 
 idx_t InitGlobalLineage(idx_t qid, idx_t opid) {
   auto &lop_info = LineageState::qid_plans[qid][opid];
+  string table = to_string(qid) + "_" + to_string(opid);
+  if (LineageState::debug)  std::cout << ">> GetCachedLineage: " <<
+                      EnumUtil::ToChars<LogicalOperatorType>(lop_info->type)
+                      << " table: " << table << std::endl;
   vector<idx_t> children_opid;
   for (auto &child : lop_info->children) {
     idx_t cid = InitGlobalLineage(qid, child);
     children_opid.push_back(cid);
   }
 
-  string table = to_string(qid) + "_" + to_string(opid);
-  if (FadeState::debug)  std::cout << ">> GetCachedLineage: " <<
-                      EnumUtil::ToChars<LogicalOperatorType>(lop_info->type)
-                      << " table: " << table << std::endl;
   switch (lop_info->type) {
-   case LogicalOperatorType::LOGICAL_PROJECTION: {
-      return children_opid[0];
-   } case LogicalOperatorType::LOGICAL_ORDER_BY:
-     case LogicalOperatorType::LOGICAL_FILTER: {
+   case LogicalOperatorType::LOGICAL_PROJECTION:
+   case LogicalOperatorType::LOGICAL_TOP_N:
+   case LogicalOperatorType::LOGICAL_ORDER_BY:
+   case LogicalOperatorType::LOGICAL_FILTER: {
       if (!lop_info->has_lineage) return children_opid[0];
       vector<std::pair<Vector, int>>& chunked_lineage = LineageState::lineage_store[table];
       vector<vector<idx_t>>& glineage = LineageState::lineage_global_store[table];
       glineage.emplace_back();
-      if (FadeState::debug)
+      if (LineageState::debug)
         std::cout << "chunked_lineage: " << chunked_lineage.size() << std::endl;
       for (auto& lin_n :chunked_lineage) {
         int64_t* col = reinterpret_cast<int64_t*>(lin_n.first.GetData());
@@ -86,7 +86,7 @@ idx_t InitGlobalLineage(idx_t qid, idx_t opid) {
         for (idx_t i = 0; i < count; i++) glineage[0].emplace_back(col[i]);
       }
       lop_info->n_output = glineage[0].size();
-      if (FadeState::debug) std::cout << " |glineage[0]|: " << glineage[0].size() << std::endl;
+      if (LineageState::debug) std::cout << "filter/order/topn: |glineage[0]|: " << glineage[0].size() << std::endl;
       return opid;
    } case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
       vector<vector<idx_t>>& glineage = LineageState::lineage_global_store[table];
@@ -102,7 +102,7 @@ idx_t InitGlobalLineage(idx_t qid, idx_t opid) {
         }
       }
       lop_info->n_output = glineage[0].size();
-      if (FadeState::debug) std::cout << " |glineage[0]|: " << glineage[0].size() << " |glineage[1]|: "
+      if (LineageState::debug) std::cout << " |glineage[0]|: " << glineage[0].size() << " |glineage[1]|: "
                                      << glineage[1].size() << std::endl;
       return opid;
    } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
@@ -125,7 +125,7 @@ idx_t InitGlobalLineage(idx_t qid, idx_t opid) {
         }
       }
       lop_info->n_output = glineage.size();
-      if (FadeState::debug) std::cout << " |glineage|: " << glineage.size() << std::endl;
+      if (LineageState::debug) std::cout << " |glineage|: " << glineage.size() << std::endl;
       return opid;
    } default: {}}
   
@@ -321,7 +321,7 @@ idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
   auto& fnode = fade_data[opid];
 
   if (FadeState::debug)
-    std::cout << "prep fade exit:" << EnumUtil::ToChars<LogicalOperatorType>(lop_info->type)
+    std::cout << "prep aggs fade:" << EnumUtil::ToChars<LogicalOperatorType>(lop_info->type)
        << ", n_output:" << lop_info->n_output << std::endl;
 
   switch (lop_info->type) {
@@ -338,6 +338,7 @@ idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,
    } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
       fnode.n_interventions = fade_data[children_opid[0]].n_interventions;
       int n_output = lop_info->n_output;
+      std::cout << "n_interventions: " << fnode.n_interventions << std::endl;
       // alloc per worker t. n_output X n_interventions
       // TODO: access FadeState::aggs and only evaluate its sub_aggs
       for (auto &sub_agg : FadeState::sub_aggs[qid_opid]) {
