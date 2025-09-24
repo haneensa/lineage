@@ -9,6 +9,7 @@ parser = argparse.ArgumentParser(description='TPCH benchmarking script')
 parser.add_argument('--duckdb_version', type=str, help='duckdb version', default='v1.3.0') # the only supported version currently 
 parser.add_argument('--arch', type=str, help='arch', default='osx_amd64') # Replace with your architecture (e.g., linux_amd64, osx_amd64)
 parser.add_argument('--name', type=str, help='extension name', default='lineage') # Replace with your architecture (e.g., linux_amd64, osx_amd64)
+args = parser.parse_args()
 duckdb_version = args.duckdb_version
 arch = args.arch
 name = args.name
