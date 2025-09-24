@@ -3,9 +3,10 @@
 #include "lineage/lineage_init.hpp"
 
 #include "duckdb.hpp"
-#include <immintrin.h>
+//#include <immintrin.h>
 
-using Mask16 = __mmask16; //uint16_t; // __mmask16
+using Mask16 = uint16_t; // __mmask16
+//using Mask16 = __mmask16; //uint16_t; // __mmask16
 
 namespace duckdb {
 
