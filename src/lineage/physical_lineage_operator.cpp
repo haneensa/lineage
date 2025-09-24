@@ -8,6 +8,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
+#include <cmath>
 
 
 namespace duckdb {
