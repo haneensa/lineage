@@ -49,13 +49,6 @@ con.execute("PRAGMA set_lineage(False)")
 
 #print(lineage)
 
-start = timer()
-lineage = con.execute(f"select count(*) from LQ({args.oid})").df()
-end = timer()
-
-print(end - start)
-print(lineage)
-
 meta = con.execute("select * from pragma_latest_qid()").df()
 print(meta)
 assert(len(meta) > 0)
