@@ -1,5 +1,7 @@
 #include "fade/fade.hpp"
 #include <iostream>
+#include <cmath>
+
 
 namespace duckdb {
 
