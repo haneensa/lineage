@@ -19,6 +19,11 @@ PhysicalLineageOperator::PhysicalLineageOperator(vector<LogicalType> types, Phys
       is_root(is_root), dependent_type(dependent_type), source_count(source_count),
       operator_id(operator_id), query_id(query_id),
       left_rid(left_rid), right_rid(right_rid), join_type(join_type) {
+      if (LineageState::debug) {
+        std::cout << "[DEBUG] PhysicalLineageOperator " << std::endl;
+        std::cout << child.ToString() << std::endl;
+      }
+
       children.push_back(child);
 }
 
@@ -170,13 +175,11 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
     }
 
     if (!is_root) {
-      //
       // This is not the root, reindex complex annotations
       chunk.data.back().Sequence(state.offset, 1, input.size());
       state.offset += input.size();
     }
-    
-    
+
     return OperatorResultType::NEED_MORE_INPUT;
 }
 

@@ -145,6 +145,9 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
   // Get a plan for our child using the public API
   bool debug = false;
   string join_type = "";
+  string table_name = to_string(query_id) + "_" + to_string(operator_id);
+  LineageState::lineage_types[table_name] = dependent_type;
+
   if (this->dependent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN
        || this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
       auto& join = children[0]->Cast<LogicalJoin>();
@@ -198,11 +201,6 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
     
     if (LineageState::debug) { std::cout << delim.distinct.ToString() << std::endl; }
   }
-  if (LineageState::debug) {
-    std::cout << "[DEBUG] LogicalLineageOperator::CreatePlan. " << std::endl;
-    std::cout << child.ToString() << std::endl;
-  }
-  
   // if we need payload
   if (this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
     auto agg_types = child.children[0].get().GetTypes();
@@ -212,9 +210,6 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
                                       operator_id, query_id, child);
   }
   
-  string table_name = to_string(query_id) + "_" + to_string(operator_id);
-  LineageState::lineage_types[table_name] = dependent_type;
-
   return generator.Make<PhysicalLineageOperator>(types, child, operator_id, query_id, dependent_type,
       source_count, left_rid, right_rid, is_root, join_type);
 }
