@@ -26,6 +26,7 @@ typedef idx_t QID;
 typedef string QID_OPID;
 
 struct LineageState {
+   static bool cache;
    static bool capture;
    static bool persist;
    static bool debug;

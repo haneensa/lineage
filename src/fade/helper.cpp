@@ -186,7 +186,6 @@ void ExtractAggsContext(string qid_opid, unique_ptr<Expression>& expr,
     FadeState::sub_aggs[qid_opid]["count"] = make_shared_ptr<SubAggsContext>("count", LogicalType::INTEGER, 0, 0);
   }
   if (name == "count" || name == "count_star") {
-    std::cout << "---> count idx: " << key << std::endl;
     vector<string> sub_aggs_list = {"count"};
     FadeState::aggs[qid_opid][key] = make_shared_ptr<AggFuncContext>("count", LogicalType::INTEGER, std::move(sub_aggs_list));
   }

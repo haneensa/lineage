@@ -202,7 +202,7 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
     if (LineageState::debug) { std::cout << delim.distinct.ToString() << std::endl; }
   }
   // if we need payload
-  if (this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
+  if (LineageState::cache && this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
     auto agg_types = child.children[0].get().GetTypes();
     // Replace agg child with caching op
     auto agg_child = child.children[0];

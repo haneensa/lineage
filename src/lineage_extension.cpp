@@ -17,6 +17,7 @@
 
 namespace duckdb {
 
+bool LineageState::cache = false;
 bool LineageState::capture = false;
 bool LineageState::debug = false;
 bool LineageState::persist = true;
