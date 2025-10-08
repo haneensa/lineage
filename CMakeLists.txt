@@ -15,6 +15,7 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES 
+    src/lineage_logger.cpp
     src/lineage/lineage_init.cpp
     src/lineage_extension.cpp
     src/lineage/lineage_reader.cpp

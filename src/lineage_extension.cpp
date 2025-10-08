@@ -15,6 +15,9 @@
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/main/extension_util.hpp"
 
+// TODO: replace with "duckdb/execution/lineage_logger.hpp"
+#include "lineage_logger.hpp"
+
 namespace duckdb {
 
 bool LineageState::cache = false;
@@ -89,6 +92,41 @@ inline void PragmaSetLineage(ClientContext &context, const FunctionParameters &p
   LineageState::capture  = parameters.values[0].GetValue<bool>();
 }
 
+static void PragmaDisableFilterPushDown(ClientContext &context, const FunctionParameters &parameters) {
+  LineageGlobal::enable_filter_pushdown = false;
+  std::cout << "Disable Filter Pushdown" << std::endl;
+}
+
+static void PragmaEnableFilterPushDown(ClientContext &context, const FunctionParameters &parameters) {
+  LineageGlobal::enable_filter_pushdown = true;
+	std::cout << "Enable Filter Pushdown" << std::endl;
+}
+
+static void PragmaSetAgg(ClientContext &context, const FunctionParameters &parameters) {
+	string agg_type = parameters.values[0].ToString();
+	D_ASSERT(agg_type == "perfect" || agg_type == "reg" || agg_type == "clear");
+	std::cout << "Setting agg type to " << agg_type << " - be careful! Failures possible if too many buckets (I think)." << std::endl;
+	if (agg_type == "clear") {
+    LineageGlobal::explicit_agg_type = "";
+	} else {
+    LineageGlobal::explicit_agg_type = agg_type;
+	}
+}
+
+static string PragmaSetJoin(ClientContext &context, const FunctionParameters &parameters) {
+	string join_type = parameters.values[0].ToString();
+	D_ASSERT(join_type == "hash" || join_type == "merge" || join_type == "nl" || join_type == "index" || join_type == "block" || join_type == "clear");
+	std::cout << "Setting join type to " << join_type << " - be careful! Failures possible for hash/index join if non equijoin." << std::endl;
+	if (join_type == "clear") {
+    LineageGlobal::explicit_join_type = "";
+	} else {
+    LineageGlobal::explicit_join_type = join_type;
+	}
+  return "select 1";
+}
+
+
+
 void LineageExtension::Load(DuckDB &db) {
     auto optimizer_extension = make_uniq<OptimizerExtension>();
     optimizer_extension->optimize_function = [](OptimizerExtensionInput &input, 
@@ -121,6 +159,14 @@ void LineageExtension::Load(DuckDB &db) {
     auto set_lineage_fun = PragmaFunction::PragmaCall("set_lineage", PragmaSetLineage, {LogicalType::BOOLEAN});
     ExtensionUtil::RegisterFunction(db_instance, set_lineage_fun);
     
+    auto enable_filter_scan = PragmaFunction::PragmaStatement("enable_filter_pushdown", PragmaEnableFilterPushDown);
+    ExtensionUtil::RegisterFunction(db_instance, enable_filter_scan);
+    auto disable_filter_scan = PragmaFunction::PragmaStatement("disable_filter_pushdown", PragmaDisableFilterPushDown);
+    ExtensionUtil::RegisterFunction(db_instance, disable_filter_scan);
+	  auto set_agg_fun = PragmaFunction::PragmaCall("set_agg", PragmaSetAgg, {LogicalType::VARCHAR});
+    ExtensionUtil::RegisterFunction(db_instance, set_agg_fun);
+	  auto set_join_fun = PragmaFunction::PragmaCall("set_join", PragmaSetJoin, {LogicalType::VARCHAR});
+    ExtensionUtil::RegisterFunction(db_instance, set_join_fun);
 
     TableFunction global_func("global_lineage", {}, LineageGFunction::LineageGImplementation,
         LineageGFunction::LineageGBind, LineageGFunction::LineageGInit);
