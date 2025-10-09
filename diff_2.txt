@@ -1,0 +1,223 @@
+diff --git a/src/common/row_operations/row_aggregate.cpp b/src/common/row_operations/row_aggregate.cpp
+index 4d39ca7ee9..4c9bd6825d 100644
+--- a/src/common/row_operations/row_aggregate.cpp
++++ b/src/common/row_operations/row_aggregate.cpp
+@@ -10,6 +10,8 @@
+ #include "duckdb/common/types/row/tuple_data_layout.hpp"
+ #include "duckdb/execution/operator/aggregate/aggregate_object.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ void RowOperations::InitializeStates(TupleDataLayout &layout, Vector &addresses, const SelectionVector &sel,
+@@ -76,6 +78,17 @@ void RowOperations::CombineStates(RowOperationsState &state, TupleDataLayout &la
+ 	//	Move to the first aggregate states
+ 	VectorOperations::AddInPlace(sources, UnsafeNumericCast<int64_t>(layout.GetAggrOffset()), count);
+ 	VectorOperations::AddInPlace(targets, UnsafeNumericCast<int64_t>(layout.GetAggrOffset()), count);
++	
++  if (LineageGlobal::LS.capture) {
++		data_ptr_t* src = (data_ptr_t*)malloc(sizeof(data_ptr_t)*count);
++    auto src_ptrs = FlatVector::GetData<data_ptr_t>(sources);
++    memcpy(src, src_ptrs, count * sizeof(data_ptr_t));
++
++		auto target_ptrs = FlatVector::GetData<data_ptr_t>(targets);
++	  data_ptr_t* target = (data_ptr_t*)malloc(sizeof(data_ptr_t)*count);
++    memcpy(target, target_ptrs, count * sizeof(data_ptr_t));
++    LineageGlobal::a.combine_log.emplace_back(src, target, count);
++	}
+ 
+ 	// Keep track of the offset
+ 	idx_t offset = layout.GetAggrOffset();
+@@ -111,6 +124,13 @@ void RowOperations::FinalizeStates(RowOperationsState &state, TupleDataLayout &l
+ 	//	Move to the first aggregate state
+ 	VectorOperations::AddInPlace(addresses_copy, UnsafeNumericCast<int64_t>(layout.GetAggrOffset()), result.size());
+ 
++	if (LineageGlobal::LS.capture) {
++    auto ptrs = FlatVector::GetData<data_ptr_t>(addresses_copy);
++		data_ptr_t* addresses = (data_ptr_t*)malloc(sizeof(data_ptr_t)*result.size());
++    memcpy(addresses, ptrs, result.size() * sizeof(data_ptr_t));
++    LineageGlobal::a.finalize_states_log.emplace_back(addresses, result.size());
++	}
++
+ 	auto &aggregates = layout.GetAggregates();
+ 	for (idx_t i = 0; i < aggregates.size(); i++) {
+ 		auto &target = result.data[aggr_idx + i];
+diff --git a/src/execution/aggregate_hashtable.cpp b/src/execution/aggregate_hashtable.cpp
+index 7bcb1ce419..123b0db665 100644
+--- a/src/execution/aggregate_hashtable.cpp
++++ b/src/execution/aggregate_hashtable.cpp
+@@ -12,6 +12,8 @@
+ #include "duckdb/execution/ht_entry.hpp"
+ #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ using ValidityBytes = TupleDataLayout::ValidityBytes;
+@@ -562,6 +564,13 @@ idx_t GroupedAggregateHashTable::AddChunk(DataChunk &groups, Vector &group_hashe
+ 	const auto new_group_count = FindOrCreateGroups(groups, group_hashes, state.addresses, state.new_groups);
+ 	VectorOperations::AddInPlace(state.addresses, NumericCast<int64_t>(layout_ptr->GetAggrOffset()), payload.size());
+ 
++  if (LineageGlobal::LS.capture) {
++		auto ptrs = FlatVector::GetData<data_ptr_t>(state.addresses);
++    data_ptr_t* a  = (data_ptr_t*)malloc(sizeof(data_ptr_t) * groups.size());
++	  memcpy(a, ptrs, groups.size() * sizeof(data_ptr_t));
++    LineageGlobal::a.scatter_log.emplace_back(a, groups.size());
++	}
++
+ 	UpdateAggregates(payload, filter);
+ 
+ 	return new_group_count;
+diff --git a/src/execution/perfect_aggregate_hashtable.cpp b/src/execution/perfect_aggregate_hashtable.cpp
+index 48f05f88a6..4eec7bcba6 100644
+--- a/src/execution/perfect_aggregate_hashtable.cpp
++++ b/src/execution/perfect_aggregate_hashtable.cpp
+@@ -4,6 +4,8 @@
+ #include "duckdb/common/row_operations/row_operations.hpp"
+ #include "duckdb/execution/expression_executor.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ PerfectAggregateHashTable::PerfectAggregateHashTable(ClientContext &context, Allocator &allocator,
+@@ -127,6 +129,18 @@ void PerfectAggregateHashTable::AddChunk(DataChunk &groups, DataChunk &payload)
+ 		current_shift -= required_bits[i];
+ 		ComputeGroupLocation(groups.data[i], group_minima[i], address_data, current_shift, groups.size());
+ 	}
++
++  if (LineageGlobal::LS.capture) {
++    // std::cout << "Capture Lineage! " << LineageGlobal::LS.capture << std::endl;
++    LineageGlobal::a.tuple_size = tuple_size;
++    LineageGlobal::a.fixed = uintptr_t(data);
++    int* a = (int*) malloc(groups.size() * sizeof(int));
++    for (idx_t i = 0; i < groups.size(); i++) {
++      a[i] = address_data[i];
++    }
++    LineageGlobal::a.int_scatter_log.emplace_back(a, groups.size());
++  }
++
+ 	// now we have the HT entry number for every tuple
+ 	// compute the actual pointer to the data by adding it to the base HT pointer and multiplying by the tuple size
+ 	for (idx_t i = 0; i < groups.size(); i++) {
+diff --git a/src/execution/physical_plan/plan_aggregate.cpp b/src/execution/physical_plan/plan_aggregate.cpp
+index 0831ee1536..36c6926c15 100644
+--- a/src/execution/physical_plan/plan_aggregate.cpp
++++ b/src/execution/physical_plan/plan_aggregate.cpp
+@@ -14,6 +14,8 @@
+ #include "duckdb/planner/expression/bound_reference_expression.hpp"
+ #include "duckdb/planner/operator/logical_aggregate.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ static uint32_t RequiredBitsForValue(uint32_t n) {
+@@ -268,6 +270,24 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalAggregate &op) {
+ 	// use a partitioned or perfect hash aggregate if possible
+ 	vector<column_t> partition_columns;
+ 	vector<idx_t> required_bits;
++
++	//////////////////////
++  if (LineageGlobal::explicit_agg_type != "") {
++    if (LineageGlobal::explicit_agg_type == "perfect" && CanUsePerfectHashAggregate(context, op, required_bits)) {
++      auto &group_by = Make<PhysicalPerfectHashAggregate>(context, op.types, std::move(op.expressions),
++                                                          std::move(op.groups), std::move(op.group_stats),
++                                                          std::move(required_bits), op.estimated_cardinality);
++      group_by.children.push_back(plan);
++      return group_by;
++    } else if (LineageGlobal::explicit_agg_type == "reg") {
++      auto &group_by = Make<PhysicalHashAggregate>(context, op.types, std::move(op.expressions), std::move(op.groups),
++                                                   std::move(op.grouping_sets), std::move(op.grouping_functions),
++                                                   op.estimated_cardinality);
++      group_by.children.push_back(plan);
++      return group_by;
++    }
++  }
++  ////////////////////////
+ 	if (can_use_simple_aggregation && CanUsePartitionedAggregate(context, op, plan, partition_columns)) {
+ 		auto &group_by =
+ 		    Make<PhysicalPartitionedAggregate>(context, op.types, std::move(op.expressions), std::move(op.groups),
+diff --git a/src/execution/physical_plan/plan_comparison_join.cpp b/src/execution/physical_plan/plan_comparison_join.cpp
+index d3ad37204c..8a5b91a9a2 100644
+--- a/src/execution/physical_plan/plan_comparison_join.cpp
++++ b/src/execution/physical_plan/plan_comparison_join.cpp
+@@ -15,6 +15,8 @@
+ #include "duckdb/planner/operator/logical_comparison_join.hpp"
+ #include "duckdb/transaction/duck_transaction.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ static void RewriteJoinCondition(Expression &expr, idx_t offset) {
+@@ -58,6 +60,31 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
+ 	}
+ 	auto &client_config = ClientConfig::GetConfig(context);
+ 
++  if (LineageGlobal::explicit_join_type != "") {
++    if (LineageGlobal::explicit_join_type == "hash" && has_equality) {
++      // Equality join with small number of keys : possible perfect join optimization
++      auto &join = Make<PhysicalHashJoin>(op, left, right, std::move(op.conditions), op.join_type,
++                                          op.left_projection_map, op.right_projection_map, std::move(op.mark_types),
++                                          op.estimated_cardinality, std::move(op.filter_pushdown));
++      join.Cast<PhysicalHashJoin>().join_stats = std::move(op.join_stats);
++      return join;
++    } else if (LineageGlobal::explicit_join_type == "merge" && can_merge) {
++      // range join: use piecewise merge join
++      return Make<PhysicalPiecewiseMergeJoin>(op, left, right, std::move(op.conditions), op.join_type,
++                                              op.estimated_cardinality, std::move(op.filter_pushdown));
++    } else if (LineageGlobal::explicit_join_type == "nl" &&PhysicalNestedLoopJoin::IsSupported(op.conditions, op.join_type)) {
++      // inequality join: use nested loop
++      return Make<PhysicalNestedLoopJoin>(op, left, right, std::move(op.conditions), op.join_type,
++                                          op.estimated_cardinality, std::move(op.filter_pushdown));
++    } else if (LineageGlobal::explicit_join_type == "block") {
++      for (auto &cond : op.conditions) {
++        RewriteJoinCondition(*cond.right, left.types.size());
++      }
++      auto condition = JoinCondition::CreateExpression(std::move(op.conditions));
++      return Make<PhysicalBlockwiseNLJoin>(op, left, right, std::move(condition), op.join_type, op.estimated_cardinality);
++    }
++  }
++
+ 	//	TODO: Extend PWMJ to handle all comparisons and projection maps
+ 	const auto prefer_range_joins = client_config.prefer_range_joins && can_iejoin;
+ 	if (has_equality && !prefer_range_joins) {
+diff --git a/src/optimizer/optimizer.cpp b/src/optimizer/optimizer.cpp
+index 8c16e83a6c..0eac1bc3ea 100644
+--- a/src/optimizer/optimizer.cpp
++++ b/src/optimizer/optimizer.cpp
+@@ -36,6 +36,8 @@
+ #include "duckdb/planner/binder.hpp"
+ #include "duckdb/planner/planner.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ Optimizer::Optimizer(Binder &binder, ClientContext &context) : context(context), binder(binder), rewriter(context) {
+@@ -130,13 +132,15 @@ void Optimizer::RunBuiltInOptimizers() {
+ 		plan = filter_pullup.Rewrite(std::move(plan));
+ 	});
+ 
+-	// perform filter pushdown
+-	RunOptimizer(OptimizerType::FILTER_PUSHDOWN, [&]() {
+-		FilterPushdown filter_pushdown(*this);
+-		unordered_set<idx_t> top_bindings;
+-		filter_pushdown.CheckMarkToSemi(*plan, top_bindings);
+-		plan = filter_pushdown.Rewrite(std::move(plan));
+-	});
++  if (LineageGlobal::enable_filter_pushdown) {
++    // perform filter pushdown
++    RunOptimizer(OptimizerType::FILTER_PUSHDOWN, [&]() {
++      FilterPushdown filter_pushdown(*this);
++      unordered_set<idx_t> top_bindings;
++      filter_pushdown.CheckMarkToSemi(*plan, top_bindings);
++      plan = filter_pushdown.Rewrite(std::move(plan));
++    });
++  }
+ 
+ 	// derive and push filters into materialized CTEs
+ 	RunOptimizer(OptimizerType::CTE_FILTER_PUSHER, [&]() {

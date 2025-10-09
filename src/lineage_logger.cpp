@@ -4,9 +4,10 @@
 
 namespace duckdb {
 
-string LineageGlobal::explicit_join_type;
-string LineageGlobal::explicit_agg_type;
-bool LineageGlobal::enable_filter_pushdown;
+// default values
+string LineageGlobal::explicit_join_type = "";
+string LineageGlobal::explicit_agg_type = "";
+bool LineageGlobal::enable_filter_pushdown = true;
 LineageManager LineageGlobal::LS;
 
 thread_local Artifacts LineageGlobal::a;
