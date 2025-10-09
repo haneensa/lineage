@@ -19,7 +19,8 @@ LogicalLineageOperator::LogicalLineageOperator(idx_t estimated_cardinality,
     int source_count, idx_t left_rid, idx_t right_rid, bool is_root)  :
   operator_id(operator_id), query_id(query_id), 
   source_count(source_count), dependent_type(dependent_type), is_root(is_root),
-  left_rid(left_rid), right_rid(right_rid),  mark_join(false) {
+  left_rid(left_rid), right_rid(right_rid),  mark_join(false),
+  pre(false), post(false) {
   this->estimated_cardinality = estimated_cardinality; 
   LineageState::qid_plans[query_id][operator_id]->has_lineage = true;
   if (LineageState::debug)
@@ -34,6 +35,15 @@ void LogicalLineageOperator::ResolveTypes()  {
     for (auto &type : types) { std::cout << type.ToString() << " ";}
      std::cout << "\n";
   }
+
+  if (pre) { // strip annotations
+    types.pop_back();
+    return;
+  } else if (post) { // add annotations
+    types.push_back(LogicalType::ROW_TYPE);
+    return;
+  }
+
   if (this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_GET) { 
     types.pop_back();
     types.push_back(LogicalType::ROW_TYPE);
@@ -211,6 +221,6 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
   }
   
   return generator.Make<PhysicalLineageOperator>(types, child, operator_id, query_id, dependent_type,
-      source_count, left_rid, right_rid, is_root, join_type);
+      source_count, left_rid, right_rid, is_root, join_type, pre, post);
 }
 }

@@ -172,7 +172,8 @@ void LinkParentDelimGets(idx_t query_id, idx_t opid, idx_t source_id) {
   auto &lop = LineageState::qid_plans[query_id][opid];
   
   if (lop->type == LogicalOperatorType::LOGICAL_DELIM_GET) {
-   std::cout << "get delim get children " << opid << " " << source_id << std::endl;
+    if (LineageState::debug)
+      std::cout << "get delim get children " << opid << " " << source_id << std::endl;
     lop->source_id.push_back(source_id);
   }
 
@@ -188,8 +189,8 @@ void PostAnnotate(idx_t query_id, idx_t root, int &sink_id) {
   vector<int> parents;
   if (lop->has_lineage) {
     if (lop->type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
-      std::cout << "get delim get children" << std::endl;
-      std::cout << "######## " << lop->delim_flipped << "######### " << std::endl;
+      if (LineageState::debug)
+        std::cout << "get delim get children: " << lop->delim_flipped << std::endl;
       idx_t delim_scan_idx = lop->delim_flipped ? 1 : 0;
       idx_t src_id = find_first_opid_with_lineage_or_leaf(query_id, lop->children[delim_scan_idx]);
       idx_t delim_get_idx = lop->delim_flipped ? 0 : 1;
@@ -360,6 +361,7 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
   } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
       auto &aggr = op->Cast<LogicalAggregate>();
      // if (!aggr.groups.empty()) {
+      if (LineageState::hybrid == false) {
           auto list_function = GetListFunction(context);
           auto rowid_colref = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::ROW_TYPE, rowids[0]);
           vector<unique_ptr<Expression>> children;
@@ -380,6 +382,26 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
           op = std::move(dummy);
           
           return new_col_id;
+      } else {
+        // Add LM (pre=true) to strip annotations
+        auto pre_LM = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
+            op->type, 1, rowids[0], 0);
+        pre_LM->pre = true;
+        // change from [agg->child] to [agg->pre_LM->child]
+        auto child = std::move(op->children[0]);
+        pre_LM->AddChild(std::move(child));
+        op->children[0] = std::move(pre_LM);
+
+        // Add LM (post=true) to inject annotations
+        idx_t new_col_id = aggr.groups.size() + aggr.expressions.size() + aggr.grouping_functions.size();
+        auto post_LM = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
+            op->type, 1, new_col_id, 0);
+        post_LM->post = true;
+        // change from [agg->pre_LM->child] to [post_LM->agg->pre_LM->child]
+        post_LM->AddChild(std::move(op));
+        op = std::move(post_LM);
+        return new_col_id;
+      }
     //  } // if simple agg, add operator below to remove annotations, and operator above to generate annotations
   } default: {}
   }

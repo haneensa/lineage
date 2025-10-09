@@ -1,0 +1,104 @@
+diff --git a/src/common/row_operations/row_aggregate.cpp b/src/common/row_operations/row_aggregate.cpp
+index 4d39ca7ee9..4c9bd6825d 100644
+--- a/src/common/row_operations/row_aggregate.cpp
++++ b/src/common/row_operations/row_aggregate.cpp
+@@ -10,6 +10,8 @@
+ #include "duckdb/common/types/row/tuple_data_layout.hpp"
+ #include "duckdb/execution/operator/aggregate/aggregate_object.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ void RowOperations::InitializeStates(TupleDataLayout &layout, Vector &addresses, const SelectionVector &sel,
+@@ -76,6 +78,17 @@ void RowOperations::CombineStates(RowOperationsState &state, TupleDataLayout &la
+ 	//	Move to the first aggregate states
+ 	VectorOperations::AddInPlace(sources, UnsafeNumericCast<int64_t>(layout.GetAggrOffset()), count);
+ 	VectorOperations::AddInPlace(targets, UnsafeNumericCast<int64_t>(layout.GetAggrOffset()), count);
++	
++  if (LineageGlobal::LS.capture) {
++		data_ptr_t* src = (data_ptr_t*)malloc(sizeof(data_ptr_t)*count);
++    auto src_ptrs = FlatVector::GetData<data_ptr_t>(sources);
++    memcpy(src, src_ptrs, count * sizeof(data_ptr_t));
++
++		auto target_ptrs = FlatVector::GetData<data_ptr_t>(targets);
++	  data_ptr_t* target = (data_ptr_t*)malloc(sizeof(data_ptr_t)*count);
++    memcpy(target, target_ptrs, count * sizeof(data_ptr_t));
++    LineageGlobal::a.combine_log.emplace_back(src, target, count);
++	}
+ 
+ 	// Keep track of the offset
+ 	idx_t offset = layout.GetAggrOffset();
+@@ -111,6 +124,13 @@ void RowOperations::FinalizeStates(RowOperationsState &state, TupleDataLayout &l
+ 	//	Move to the first aggregate state
+ 	VectorOperations::AddInPlace(addresses_copy, UnsafeNumericCast<int64_t>(layout.GetAggrOffset()), result.size());
+ 
++	if (LineageGlobal::LS.capture) {
++    auto ptrs = FlatVector::GetData<data_ptr_t>(addresses_copy);
++		data_ptr_t* addresses = (data_ptr_t*)malloc(sizeof(data_ptr_t)*result.size());
++    memcpy(addresses, ptrs, result.size() * sizeof(data_ptr_t));
++    LineageGlobal::a.finalize_states_log.emplace_back(addresses, result.size());
++	}
++
+ 	auto &aggregates = layout.GetAggregates();
+ 	for (idx_t i = 0; i < aggregates.size(); i++) {
+ 		auto &target = result.data[aggr_idx + i];
+diff --git a/src/execution/aggregate_hashtable.cpp b/src/execution/aggregate_hashtable.cpp
+index 7bcb1ce419..123b0db665 100644
+--- a/src/execution/aggregate_hashtable.cpp
++++ b/src/execution/aggregate_hashtable.cpp
+@@ -12,6 +12,8 @@
+ #include "duckdb/execution/ht_entry.hpp"
+ #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ using ValidityBytes = TupleDataLayout::ValidityBytes;
+@@ -562,6 +564,13 @@ idx_t GroupedAggregateHashTable::AddChunk(DataChunk &groups, Vector &group_hashe
+ 	const auto new_group_count = FindOrCreateGroups(groups, group_hashes, state.addresses, state.new_groups);
+ 	VectorOperations::AddInPlace(state.addresses, NumericCast<int64_t>(layout_ptr->GetAggrOffset()), payload.size());
+ 
++  if (LineageGlobal::LS.capture) {
++		auto ptrs = FlatVector::GetData<data_ptr_t>(state.addresses);
++    data_ptr_t* a  = (data_ptr_t*)malloc(sizeof(data_ptr_t) * groups.size());
++	  memcpy(a, ptrs, groups.size() * sizeof(data_ptr_t));
++    LineageGlobal::a.scatter_log.emplace_back(a, groups.size());
++	}
++
+ 	UpdateAggregates(payload, filter);
+ 
+ 	return new_group_count;
+diff --git a/src/execution/perfect_aggregate_hashtable.cpp b/src/execution/perfect_aggregate_hashtable.cpp
+index 48f05f88a6..4eec7bcba6 100644
+--- a/src/execution/perfect_aggregate_hashtable.cpp
++++ b/src/execution/perfect_aggregate_hashtable.cpp
+@@ -4,6 +4,8 @@
+ #include "duckdb/common/row_operations/row_operations.hpp"
+ #include "duckdb/execution/expression_executor.hpp"
+ 
++#include "duckdb/execution/lineage_logger.hpp"
++
+ namespace duckdb {
+ 
+ PerfectAggregateHashTable::PerfectAggregateHashTable(ClientContext &context, Allocator &allocator,
+@@ -127,6 +129,18 @@ void PerfectAggregateHashTable::AddChunk(DataChunk &groups, DataChunk &payload)
+ 		current_shift -= required_bits[i];
+ 		ComputeGroupLocation(groups.data[i], group_minima[i], address_data, current_shift, groups.size());
+ 	}
++
++  if (LineageGlobal::LS.capture) {
++    // std::cout << "Capture Lineage! " << LineageGlobal::LS.capture << std::endl;
++    LineageGlobal::a.tuple_size = tuple_size;
++    LineageGlobal::a.fixed = uintptr_t(data);
++    int* a = (int*) malloc(groups.size() * sizeof(int));
++    for (idx_t i = 0; i < groups.size(); i++) {
++      a[i] = address_data[i];
++    }
++    LineageGlobal::a.int_scatter_log.emplace_back(a, groups.size());
++  }
++
+ 	// now we have the HT entry number for every tuple
+ 	// compute the actual pointer to the data by adding it to the base HT pointer and multiplying by the tuple size
+ 	for (idx_t i = 0; i < groups.size(); i++) {

@@ -28,6 +28,8 @@ typedef string QID_OPID;
 struct LineageState {
    static bool cache;
    static bool capture;
+   // used to disabale lineage capture for aggregates
+   static bool hybrid;
    static bool persist;
    static bool debug;
    static std::unordered_map<QID_OPID, LogicalOperatorType> lineage_types;

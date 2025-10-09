@@ -31,6 +31,8 @@ public:
     bool is_root;
     bool mark_join;
     string join_type = "";
+    bool pre;  // LM to strip away any annotations
+    bool post; // LM to add annotations
 };
 
 }

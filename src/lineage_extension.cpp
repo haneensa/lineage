@@ -16,12 +16,14 @@
 #include "duckdb/main/extension_util.hpp"
 
 // TODO: replace with "duckdb/execution/lineage_logger.hpp"
-#include "lineage_logger.hpp"
+#include "duckdb/execution/lineage_logger.hpp"
+// #include "lineage_logger.hpp"
 
 namespace duckdb {
 
 bool LineageState::cache = false;
 bool LineageState::capture = false;
+bool LineageState::hybrid= false;
 bool LineageState::debug = false;
 bool LineageState::persist = true;
 std::unordered_map<string, vector<std::pair<Vector, int>>> LineageState::lineage_store;
@@ -36,6 +38,8 @@ std::string LineageExtension::Name() {
 }
 
 inline void PragmaClearLineage(ClientContext &context, const FunctionParameters &parameters) {
+  // std::cout << "Lineage Clear" << std::endl;
+  LineageGlobal::a.clear();
   LineageState::lineage_store.clear();
   LineageState::lineage_types.clear();
   LineageState::qid_plans_roots.clear();
@@ -90,6 +94,20 @@ inline void PragmaSetPersistLineage(ClientContext &context, const FunctionParame
 
 inline void PragmaSetLineage(ClientContext &context, const FunctionParameters &parameters) {
   LineageState::capture  = parameters.values[0].GetValue<bool>();
+  if (LineageState::capture) {
+    LineageGlobal::LS.capture = LineageState::hybrid;
+  } else {
+    LineageGlobal::LS.capture = false;
+  }
+}
+
+inline void PragmaSetHybrid(ClientContext &context, const FunctionParameters &parameters) {
+  LineageState::hybrid  = parameters.values[0].GetValue<bool>();
+  if (LineageState::capture) {
+    LineageGlobal::LS.capture = LineageState::hybrid;
+  } else {
+    LineageGlobal::LS.capture = false;
+  }
 }
 
 static void PragmaDisableFilterPushDown(ClientContext &context, const FunctionParameters &parameters) {
@@ -159,6 +177,9 @@ void LineageExtension::Load(DuckDB &db) {
     auto set_lineage_fun = PragmaFunction::PragmaCall("set_lineage", PragmaSetLineage, {LogicalType::BOOLEAN});
     ExtensionUtil::RegisterFunction(db_instance, set_lineage_fun);
     
+    auto set_hybrid_fun = PragmaFunction::PragmaCall("set_hybrid", PragmaSetHybrid, {LogicalType::BOOLEAN});
+    ExtensionUtil::RegisterFunction(db_instance, set_hybrid_fun);
+
     auto enable_filter_scan = PragmaFunction::PragmaStatement("enable_filter_pushdown", PragmaEnableFilterPushDown);
     ExtensionUtil::RegisterFunction(db_instance, enable_filter_scan);
     auto disable_filter_scan = PragmaFunction::PragmaStatement("disable_filter_pushdown", PragmaDisableFilterPushDown);
