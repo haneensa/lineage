@@ -183,19 +183,23 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
     // we maintain the guarantee that the last column is an annotation column
     auto last_col = delim.children.back().get().types.size()-1;
     auto &catalog = Catalog::GetSystemCatalog(context);
-    auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(
-        context, DEFAULT_SCHEMA, "list");
-    auto list_function = entry.functions.GetFunctionByArguments(context, {LogicalType::ROW_TYPE});
     auto rowid_colref = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::ROW_TYPE, last_col);
     vector<unique_ptr<Expression>> children;
     children.push_back(std::move(rowid_colref));
+    auto& agg = delim.distinct.Cast<PhysicalHashAggregate>();
+    string fname = "list";
+    if (LineageState::use_internal_lineage == false) {
+      agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
+    } else {
+      fname = "internal_lineage";
+      agg.types.push_back(LogicalType::BOOLEAN);
+    }
+    auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(context, DEFAULT_SCHEMA, fname);
+    auto list_function = entry.functions.GetFunctionByArguments(context, {LogicalType::ROW_TYPE});
     unique_ptr<FunctionData> bind_info = list_function.bind(context, list_function, children);
     auto list_aggregate = make_uniq<BoundAggregateExpression>(list_function, std::move(children), nullptr,
         std::move(bind_info), AggregateType::NON_DISTINCT);
-    auto& agg = delim.distinct.Cast<PhysicalHashAggregate>();
-
     agg.grouped_aggregate_data.aggregates.push_back(std::move(list_aggregate));
-    agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
 
     vector<unsafe_vector<idx_t>> grouping_functions;
     delim.distinct.grouped_aggregate_data.InitializeGroupby(std::move(agg.grouped_aggregate_data.groups),

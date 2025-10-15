@@ -45,10 +45,10 @@ bool IsSPJUA(unique_ptr<LogicalOperator>& plan) {
   return true;
 }
 
-AggregateFunction GetListFunction(ClientContext &context) {
+AggregateFunction GetAggFunction(ClientContext &context, string fname) {
   auto &catalog = Catalog::GetSystemCatalog(context);
   auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(
-      context, DEFAULT_SCHEMA, "list"
+      context, DEFAULT_SCHEMA, fname
   );
   return entry.functions.GetFunctionByArguments(context, {LogicalType::ROW_TYPE});
 }
@@ -362,7 +362,11 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
       auto &aggr = op->Cast<LogicalAggregate>();
      // if (!aggr.groups.empty()) {
       if (LineageState::hybrid == false) {
-          auto list_function = GetListFunction(context);
+        string fname = "list";
+          if (LineageState::use_internal_lineage) {
+            fname = "internal_lineage";
+          }
+          auto list_function = GetAggFunction(context, fname);
           auto rowid_colref = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::ROW_TYPE, rowids[0]);
           vector<unique_ptr<Expression>> children;
           children.push_back(std::move(rowid_colref));
@@ -371,16 +375,13 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
               list_function, std::move(children), nullptr, std::move(bind_info),
               AggregateType::NON_DISTINCT
           );
-
           aggr.expressions.push_back(std::move(list_aggregate));
+
           idx_t new_col_id = aggr.groups.size() + aggr.expressions.size() + aggr.grouping_functions.size() - 1;
-          
           auto dummy = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
               op->type, 1, new_col_id, 0);
           dummy->AddChild(std::move(op));
-
           op = std::move(dummy);
-          
           return new_col_id;
       } else {
         // Add LM (pre=true) to strip annotations

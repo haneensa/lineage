@@ -15,6 +15,8 @@
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/main/extension_util.hpp"
 
+#include "duckdb/function/aggregate_function.hpp"
+
 // TODO: replace with "duckdb/execution/lineage_logger.hpp"
 #include "duckdb/execution/lineage_logger.hpp"
 // #include "lineage_logger.hpp"
@@ -25,16 +27,31 @@ bool LineageState::cache = false;
 bool LineageState::capture = false;
 bool LineageState::hybrid= false;
 bool LineageState::debug = false;
+bool LineageState::use_internal_lineage = false;
 bool LineageState::persist = true;
+std::mutex LineageState::g_log_lock;
 std::unordered_map<string, vector<std::pair<Vector, int>>> LineageState::lineage_store;
 std::unordered_map<string, vector<vector<idx_t>>> LineageState::lineage_global_store;
 std::unordered_map<string, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
 std::unordered_map<idx_t, idx_t> LineageState::qid_plans_roots;
-
+thread_local ArtifactsLog* LineageState::active_log = nullptr;
+unordered_map<string, shared_ptr<ArtifactsLog>> LineageState::logs;
 
 std::string LineageExtension::Name() {
     return "lineage";
+}
+
+void InitThreadLocalLog(string qid_opid_tid) {
+  // Initialize thread-local log once
+  if (!LineageState::active_log) {
+    std::lock_guard<std::mutex> guard(LineageState::g_log_lock);
+    auto &shared_log = LineageState::logs[qid_opid_tid];  // creates default nullptr if not present
+    if (!shared_log) {
+        shared_log = make_shared_ptr<ArtifactsLog>();
+    }
+    LineageState::active_log = shared_log.get();  // assign thread-local pointer
+  }
 }
 
 inline void PragmaClearLineage(ClientContext &context, const FunctionParameters &parameters) {
@@ -44,6 +61,9 @@ inline void PragmaClearLineage(ClientContext &context, const FunctionParameters 
   LineageState::lineage_types.clear();
   LineageState::qid_plans_roots.clear();
   LineageState::qid_plans.clear();
+
+  LineageState::active_log = nullptr;
+  LineageState::logs.clear();
 
   FadeState::aggs.clear();
   FadeState::sub_aggs.clear();
@@ -90,6 +110,10 @@ inline void PragmaLineageDebug(ClientContext &context, const FunctionParameters 
 
 inline void PragmaSetPersistLineage(ClientContext &context, const FunctionParameters &parameters) {
   LineageState::persist  = parameters.values[0].GetValue<bool>();
+}
+
+inline void PragmaSetUseInternalLineage(ClientContext &context, const FunctionParameters &parameters) {
+  LineageState::use_internal_lineage  = parameters.values[0].GetValue<bool>();
 }
 
 inline void PragmaSetLineage(ClientContext &context, const FunctionParameters &parameters) {
@@ -144,6 +168,151 @@ static string PragmaSetJoin(ClientContext &context, const FunctionParameters &pa
 }
 
 
+struct LineageUDAAggState {};
+
+struct LineageUDAInitFunction {
+	template <class STATE>
+	static void Initialize(STATE &state) {
+	}
+	static bool IgnoreNull() {
+		return false;
+	}
+};
+
+struct LineageUDABindData : public FunctionData {
+	LogicalType return_type;
+  idx_t operator_id;
+
+	explicit LineageUDABindData(LogicalType return_type_p, idx_t op_id)
+	    : return_type(std::move(return_type_p)), operator_id(op_id) {
+	}
+
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<LineageUDABindData>(return_type, operator_id);
+	}
+
+	bool Equals(const FunctionData &other_p) const override {
+		auto &other = other_p.Cast<LineageUDABindData>();
+		return return_type == other.return_type && operator_id == other.operator_id;
+	}
+};
+
+unique_ptr<FunctionData> LineageUDABindFunction(ClientContext &context,
+                                           AggregateFunction &function,
+                                           vector<unique_ptr<Expression>> &arguments) {
+	D_ASSERT(arguments.size() == 1);
+
+	auto &arg_type = arguments[0]->return_type;
+	if (arg_type.id() != LogicalTypeId::BIGINT) {
+		throw BinderException("lineageUDA_agg requires a ROWID input column");
+	}
+
+  // TODO: pass original operator id
+  static atomic<idx_t> global_operator_counter{0};
+  idx_t operator_id = global_operator_counter++;
+  if (LineageState::debug)
+    std::cout << "[LineageUDABindFunction] Created bind data with operator_id = "
+                << operator_id << std::endl;
+
+	function.return_type = LogicalType::BOOLEAN;
+
+	return make_uniq<LineageUDABindData>(function.return_type, operator_id);
+}
+
+
+static void LineageUDAUpdateFunction(Vector inputs[], AggregateInputData &aggr_input_data, idx_t input_count,
+                                Vector &state_vector, idx_t count) {
+  D_ASSERT(input_count == 1);
+  auto &input = inputs[0];
+
+  Vector annotations(input.GetType());
+  VectorOperations::Copy(input, annotations, count, 0, 0);
+  
+  Vector addresses(state_vector.GetType());
+  VectorOperations::Copy(state_vector, addresses, count, 0, 0);
+  
+  idx_t thread_id = GetThreadId();
+  auto &bind = aggr_input_data.bind_data->Cast<LineageUDABindData>();
+
+  if (LineageState::debug) {
+    std::cout << "[Update] Operator " << bind.operator_id
+                << " processing " << count << " rows " << thread_id << std::endl;
+    std::cout << "annotations vector: " << annotations.ToString(count) << std::endl;
+    std::cout << "addresses vector: " << addresses.ToString(count) << std::endl;
+  }
+
+  string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
+  InitThreadLocalLog(qid_opid_tid);
+  LineageState::active_log->agg_update_log.push_back({std::move(addresses), std::move(annotations)});
+}
+
+
+static void LineageUDACombineFunction(Vector &states_vector, Vector &combined, AggregateInputData &aggr_input_data,
+                                 idx_t count) {
+  Vector source(states_vector.GetType());
+  VectorOperations::Copy(states_vector, source, count, 0, 0);
+  Vector target(combined.GetType());
+  VectorOperations::Copy(combined, target, count, 0, 0);
+  
+  idx_t thread_id = GetThreadId();
+  auto &bind = aggr_input_data.bind_data->Cast<LineageUDABindData>();
+  if (LineageState::debug) {
+    std::cout << "[Combine] Operator " << bind.operator_id
+                << " processing " << count << " rows " << thread_id << std::endl;
+    std::cout << "source addresses vector: " << source.ToString(count) << std::endl;
+    std::cout << "target addresses vector: " << target.ToString(count) << std::endl;
+  }
+  string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
+  InitThreadLocalLog(qid_opid_tid);
+  LineageState::active_log->agg_combine_log.push_back({std::move(source), std::move(target)});
+}
+
+static void LineageUDAFinalize(Vector &states_vector, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
+                          idx_t offset) {
+  // result should be BOOLEAN
+	D_ASSERT(result.GetType().id() == LogicalTypeId::BOOLEAN);
+
+	auto result_data = FlatVector::GetData<bool>(result);
+	auto &mask = FlatVector::Validity(result);
+
+	for (idx_t i = 0; i < count; i++) {
+		const auto rid = i + offset;
+		result_data[rid] = true;
+	}
+  
+  Vector addresses(states_vector.GetType());
+  VectorOperations::Copy(states_vector, addresses, count, 0, 0);
+
+  idx_t thread_id = GetThreadId();
+  auto &bind = aggr_input_data.bind_data->Cast<LineageUDABindData>();
+  if (LineageState::debug) {
+    std::cout << "[Finalize] Operator " << bind.operator_id
+                << " processing " << count << " rows " << thread_id << std::endl;
+    std::cout << "finalize addresses vector: " << addresses.ToString(count) << std::endl;
+  }
+
+  string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
+  InitThreadLocalLog(qid_opid_tid);
+  LineageState::active_log->agg_finalize_log.push_back(std::move(addresses));
+}
+
+AggregateFunction GetLineageUDAAllEvenFunction() {
+	AggregateFunction func(
+	    {LogicalType::ROW_TYPE},              // arguments (ROWID represented as BIGINT)
+	    LogicalTypeId::BOOLEAN,               // return type
+	    AggregateFunction::StateSize<LineageUDAAggState>,                    // state size helper
+	    AggregateFunction::StateInitialize<LineageUDAAggState, LineageUDAInitFunction>, // initializer
+	    LineageUDAUpdateFunction,                  // update
+	    LineageUDACombineFunction,                 // combine
+	    LineageUDAFinalize,                        // finalize
+	    nullptr,
+      LineageUDABindFunction,                     // bind function
+      nullptr, nullptr, nullptr   
+	);
+
+	return func;
+}
+
 
 void LineageExtension::Load(DuckDB &db) {
     auto optimizer_extension = make_uniq<OptimizerExtension>();
@@ -173,6 +342,9 @@ void LineageExtension::Load(DuckDB &db) {
     
     auto set_persist_fun = PragmaFunction::PragmaCall("set_persist_lineage", PragmaSetPersistLineage, {LogicalType::BOOLEAN});
     ExtensionUtil::RegisterFunction(db_instance, set_persist_fun);
+
+    auto set_use_internal_lineage_fun = PragmaFunction::PragmaCall("set_use_internal_lineage", PragmaSetUseInternalLineage, {LogicalType::BOOLEAN});
+    ExtensionUtil::RegisterFunction(db_instance, set_use_internal_lineage_fun);
     
     auto set_lineage_fun = PragmaFunction::PragmaCall("set_lineage", PragmaSetLineage, {LogicalType::BOOLEAN});
     ExtensionUtil::RegisterFunction(db_instance, set_lineage_fun);
@@ -202,6 +374,11 @@ void LineageExtension::Load(DuckDB &db) {
     // JSON replacement scan
     auto &config = DBConfig::GetConfig(*db.instance);
     config.replacement_scans.emplace_back(LineageScanFunction::ReadLineageReplacement);
+
+
+    AggregateFunctionSet set("internal_lineage");
+    set.AddFunction(GetLineageUDAAllEvenFunction());
+    ExtensionUtil::RegisterFunction(db_instance, set);
 }
 
 extern "C" {
