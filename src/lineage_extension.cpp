@@ -23,6 +23,7 @@
 
 namespace duckdb {
 
+bool LineageState::use_vector = false;
 bool LineageState::cache = false;
 bool LineageState::capture = false;
 bool LineageState::hybrid= false;
@@ -36,6 +37,7 @@ std::unordered_map<string, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
 std::unordered_map<idx_t, idx_t> LineageState::qid_plans_roots;
 thread_local ArtifactsLog* LineageState::active_log = nullptr;
+thread_local string LineageState::active_log_key = "";
 unordered_map<string, shared_ptr<ArtifactsLog>> LineageState::logs;
 
 std::string LineageExtension::Name() {
@@ -44,12 +46,13 @@ std::string LineageExtension::Name() {
 
 void InitThreadLocalLog(string qid_opid_tid) {
   // Initialize thread-local log once
-  if (!LineageState::active_log) {
+  if (!LineageState::active_log || LineageState::active_log_key != qid_opid_tid) {
     std::lock_guard<std::mutex> guard(LineageState::g_log_lock);
     auto &shared_log = LineageState::logs[qid_opid_tid];  // creates default nullptr if not present
     if (!shared_log) {
         shared_log = make_shared_ptr<ArtifactsLog>();
     }
+    LineageState::active_log_key = qid_opid_tid;
     LineageState::active_log = shared_log.get();  // assign thread-local pointer
   }
 }
@@ -62,6 +65,7 @@ inline void PragmaClearLineage(ClientContext &context, const FunctionParameters 
   LineageState::qid_plans_roots.clear();
   LineageState::qid_plans.clear();
 
+  LineageState::active_log_key = "";
   LineageState::active_log = nullptr;
   LineageState::logs.clear();
 
@@ -124,6 +128,11 @@ inline void PragmaSetLineage(ClientContext &context, const FunctionParameters &p
     LineageGlobal::LS.capture = false;
   }
 }
+
+inline void PragmaSetUseVector(ClientContext &context, const FunctionParameters &parameters) {
+  LineageState::use_vector  = parameters.values[0].GetValue<bool>();
+}
+
 
 inline void PragmaSetHybrid(ClientContext &context, const FunctionParameters &parameters) {
   LineageState::hybrid  = parameters.values[0].GetValue<bool>();
@@ -200,12 +209,23 @@ struct LineageUDABindData : public FunctionData {
 unique_ptr<FunctionData> LineageUDABindFunction(ClientContext &context,
                                            AggregateFunction &function,
                                            vector<unique_ptr<Expression>> &arguments) {
-	D_ASSERT(arguments.size() == 1);
+  //D_ASSERT(arguments.size() == 1);
 
-	auto &arg_type = arguments[0]->return_type;
+	/*auto &arg_type = arguments[0]->return_type;
 	if (arg_type.id() != LogicalTypeId::BIGINT) {
 		throw BinderException("lineageUDA_agg requires a ROWID input column");
-	}
+	}*/
+
+ vector<LogicalType> arg_types;
+  for (auto &arg : arguments) {
+      arg_types.push_back(arg->return_type);
+  }
+
+  // Optionally store argument count or types in bind data
+  idx_t arg_count = arg_types.size();
+
+  // Set the function's argument types dynamically
+  function.arguments = arg_types;
 
   // TODO: pass original operator id
   static atomic<idx_t> global_operator_counter{0};
@@ -220,51 +240,155 @@ unique_ptr<FunctionData> LineageUDABindFunction(ClientContext &context,
 }
 
 
+
+void PrintLoggedVector(const IVector &entry, idx_t type_size) {
+    std::cout << "IVector count: " << entry.count << "\n";
+    // --- Print selection vector ---
+    if (entry.sel) {
+        std::cout << "Selection vector: ";
+        for (idx_t i = 0; i < entry.count; i++) {
+            std::cout << entry.sel[i] << " ";
+        }
+        std::cout << "\n";
+    } else {
+        std::cout << "Selection vector: nullptr (flat)\n";
+    }
+
+    // --- Print data buffer ---
+    std::cout << "Data buffer: ";
+    for (idx_t i = 0; i < entry.count; i++) {
+        idx_t idx = entry.sel ? entry.sel[i] : i;
+
+        // print according to type size
+        switch (type_size) {
+            case 1:
+                std::cout << +reinterpret_cast<uint8_t*>(entry.data)[idx] << " ";
+                break;
+            case 2:
+                std::cout << *reinterpret_cast<uint16_t*>(reinterpret_cast<uint8_t*>(entry.data) + idx*2) << " ";
+                break;
+            case 4:
+                std::cout << *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(entry.data) + idx*4) << " ";
+                break;
+            case 8:
+                std::cout << *reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(entry.data) + idx*8) << " ";
+                break;
+            default:
+                std::cout << "[raw]";
+                break;
+        }
+    }
+    std::cout << "\n";
+}
+
+void LogVector(Vector &vec, idx_t count, IVector &entry) {
+    auto type_size = GetTypeIdSize(vec.GetType().InternalType());
+    UnifiedVectorFormat udata;
+    vec.ToUnifiedFormat(count, udata);
+    entry.count = count;
+
+    // --- Handle Selection Vector ---
+    if (!udata.validity.AllValid() && udata.sel) {
+			  entry.sel = (sel_t*)malloc(count * sizeof(sel_t));
+        memcpy(entry.sel, udata.sel->data(),  count * sizeof(sel_t));
+        entry.is_valid = false;
+    } else {
+        entry.sel = nullptr;
+        entry.is_valid = true;
+    }
+
+    // --- Handle Data ---
+    entry.data = (data_ptr_t)malloc(type_size * count);  // owns memory
+    memcpy(entry.data, udata.data, type_size * count);
+    
+    if (LineageState::debug)
+      PrintLoggedVector(entry, type_size);
+}
+
+
 static void LineageUDAUpdateFunction(Vector inputs[], AggregateInputData &aggr_input_data, idx_t input_count,
                                 Vector &state_vector, idx_t count) {
-  D_ASSERT(input_count == 1);
-  auto &input = inputs[0];
-
-  Vector annotations(input.GetType());
-  VectorOperations::Copy(input, annotations, count, 0, 0);
-  
-  Vector addresses(state_vector.GetType());
-  VectorOperations::Copy(state_vector, addresses, count, 0, 0);
+  D_ASSERT(input_count >= 1);
+  D_ASSERT(state_vector.GetVectorType() == VectorType::FLAT_VECTOR);
   
   idx_t thread_id = GetThreadId();
   auto &bind = aggr_input_data.bind_data->Cast<LineageUDABindData>();
-
-  if (LineageState::debug) {
+  
+  if (LineageState::debug)
     std::cout << "[Update] Operator " << bind.operator_id
-                << " processing " << count << " rows " << thread_id << std::endl;
-    std::cout << "annotations vector: " << annotations.ToString(count) << std::endl;
-    std::cout << "addresses vector: " << addresses.ToString(count) << std::endl;
-  }
-
+              << " processing " << count << " rows " << thread_id << std::endl;
   string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
   InitThreadLocalLog(qid_opid_tid);
-  LineageState::active_log->agg_update_log.push_back({std::move(addresses), std::move(annotations)});
+
+  if (LineageState::use_vector) {
+    Vector addresses(state_vector.GetType());
+    VectorOperations::Copy(state_vector, addresses, count, 0, 0);
+    if (LineageState::debug)
+      std::cout << "addresses vector: " << addresses.ToString(count) << std::endl;
+
+    vector<Vector> annotations_list;
+    annotations_list.reserve(input_count);
+    for (idx_t i = 0; i < input_count; i++) {
+      Vector annotations(inputs[i].GetType());
+      VectorOperations::Copy(inputs[i], annotations, count, 0, 0);
+      if (LineageState::debug)
+        std::cout << "annotations vector: " << annotations.ToString(count) << std::endl;
+      annotations_list.push_back(std::move(annotations));
+    }
+      
+    LineageState::active_log->agg_update_log.push_back({std::move(addresses), std::move(annotations_list)});
+  } else {
+    LineageState::active_log->buffer_agg_update_log.emplace_back();
+    {
+      auto& entry = LineageState::active_log->buffer_agg_update_log.back().first;
+      LogVector(state_vector, count, entry);
+    }
+    {
+      vector<IVector>& annotations_list = LineageState::active_log->buffer_agg_update_log.back().second;
+      annotations_list.resize(input_count);
+
+      for (idx_t i = 0; i < input_count; i++) {
+        auto& entry = annotations_list[i];
+        LogVector(inputs[i], count, entry);
+      }
+    }
+  }
+
 }
 
 
 static void LineageUDACombineFunction(Vector &states_vector, Vector &combined, AggregateInputData &aggr_input_data,
                                  idx_t count) {
-  Vector source(states_vector.GetType());
-  VectorOperations::Copy(states_vector, source, count, 0, 0);
-  Vector target(combined.GetType());
-  VectorOperations::Copy(combined, target, count, 0, 0);
-  
   idx_t thread_id = GetThreadId();
   auto &bind = aggr_input_data.bind_data->Cast<LineageUDABindData>();
-  if (LineageState::debug) {
+  if (LineageState::debug)
     std::cout << "[Combine] Operator " << bind.operator_id
                 << " processing " << count << " rows " << thread_id << std::endl;
-    std::cout << "source addresses vector: " << source.ToString(count) << std::endl;
-    std::cout << "target addresses vector: " << target.ToString(count) << std::endl;
-  }
+
   string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
   InitThreadLocalLog(qid_opid_tid);
-  LineageState::active_log->agg_combine_log.push_back({std::move(source), std::move(target)});
+  if (LineageState::use_vector) {
+    Vector source(states_vector.GetType());
+    VectorOperations::Copy(states_vector, source, count, 0, 0);
+    Vector target(combined.GetType());
+    VectorOperations::Copy(combined, target, count, 0, 0);
+  
+    if (LineageState::debug) {
+      std::cout << "source addresses vector: " << source.ToString(count) << std::endl;
+      std::cout << "target addresses vector: " << target.ToString(count) << std::endl;
+    }
+    LineageState::active_log->agg_combine_log.push_back({std::move(source), std::move(target)});
+  } else {
+    LineageState::active_log->buffer_agg_combine_log.emplace_back();
+    {
+      auto& entry = LineageState::active_log->buffer_agg_combine_log.back().first;
+      LogVector(states_vector, count, entry);
+    }
+    {
+      auto& entry = LineageState::active_log->buffer_agg_combine_log.back().second;
+      LogVector(combined, count, entry);
+    }
+  }
 }
 
 static void LineageUDAFinalize(Vector &states_vector, AggregateInputData &aggr_input_data, Vector &result, idx_t count,
@@ -280,25 +404,34 @@ static void LineageUDAFinalize(Vector &states_vector, AggregateInputData &aggr_i
 		result_data[rid] = true;
 	}
   
-  Vector addresses(states_vector.GetType());
-  VectorOperations::Copy(states_vector, addresses, count, 0, 0);
-
   idx_t thread_id = GetThreadId();
   auto &bind = aggr_input_data.bind_data->Cast<LineageUDABindData>();
-  if (LineageState::debug) {
+  if (LineageState::debug)
     std::cout << "[Finalize] Operator " << bind.operator_id
                 << " processing " << count << " rows " << thread_id << std::endl;
-    std::cout << "finalize addresses vector: " << addresses.ToString(count) << std::endl;
-  }
 
   string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
   InitThreadLocalLog(qid_opid_tid);
-  LineageState::active_log->agg_finalize_log.push_back(std::move(addresses));
+
+  if (LineageState::use_vector) {
+    Vector addresses(states_vector.GetType());
+    VectorOperations::Copy(states_vector, addresses, count, 0, 0);
+    if (LineageState::debug)
+      std::cout << "finalize addresses vector: " << addresses.ToString(count) << std::endl;
+
+    LineageState::active_log->agg_finalize_log.push_back(std::move(addresses));
+  } else {
+    LineageState::active_log->buffer_agg_finalize_log.emplace_back();
+    {
+      auto& entry = LineageState::active_log->buffer_agg_finalize_log.back();
+      LogVector(states_vector, count, entry);
+    }
+  }
 }
 
 AggregateFunction GetLineageUDAAllEvenFunction() {
 	AggregateFunction func(
-	    {LogicalType::ROW_TYPE},              // arguments (ROWID represented as BIGINT)
+	    {},
 	    LogicalTypeId::BOOLEAN,               // return type
 	    AggregateFunction::StateSize<LineageUDAAggState>,                    // state size helper
 	    AggregateFunction::StateInitialize<LineageUDAAggState, LineageUDAInitFunction>, // initializer
@@ -309,6 +442,9 @@ AggregateFunction GetLineageUDAAllEvenFunction() {
       LineageUDABindFunction,                     // bind function
       nullptr, nullptr, nullptr   
 	);
+
+  // mark as variadic
+  func.varargs = LogicalType::ANY;
 
 	return func;
 }
@@ -351,6 +487,9 @@ void LineageExtension::Load(DuckDB &db) {
     
     auto set_hybrid_fun = PragmaFunction::PragmaCall("set_hybrid", PragmaSetHybrid, {LogicalType::BOOLEAN});
     ExtensionUtil::RegisterFunction(db_instance, set_hybrid_fun);
+    
+    auto set_use_vector_fun = PragmaFunction::PragmaCall("set_use_vector", PragmaSetUseVector, {LogicalType::BOOLEAN});
+    ExtensionUtil::RegisterFunction(db_instance, set_use_vector_fun);
 
     auto enable_filter_scan = PragmaFunction::PragmaStatement("enable_filter_pushdown", PragmaEnableFilterPushDown);
     ExtensionUtil::RegisterFunction(db_instance, enable_filter_scan);

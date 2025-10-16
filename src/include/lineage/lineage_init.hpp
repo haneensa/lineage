@@ -26,12 +26,73 @@ typedef idx_t QID;
 typedef string QID_OPID;
 typedef string QID_OPID_TID;
 
-struct ArtifactsLog {
-  vector<std::pair<Vector, Vector>> agg_update_log;
-  vector<std::pair<Vector, Vector>> agg_combine_log;
-  vector<Vector> agg_finalize_log;
+struct IVector {
+    bool is_valid = true;
+    idx_t count = 0;
+    sel_t *sel = nullptr;
+    data_ptr_t data = nullptr;
+
+    IVector() = default;
+
+    // Disable copy (prevents shallow copies)
+    IVector(const IVector &) = delete;
+    IVector &operator=(const IVector &) = delete;
+      // Enable move
+    IVector(IVector &&other) noexcept {
+        is_valid = other.is_valid;
+        count = other.count;
+        sel = other.sel;
+        data = other.data;
+
+        other.sel = nullptr;
+        other.data = nullptr;
+        other.count = 0;
+    }
+
+      IVector &operator=(IVector &&other) noexcept {
+        if (this != &other) {
+            // Free existing memory
+            if (sel) free(sel);
+            if (data) free(data);
+
+            // Steal resources
+            is_valid = other.is_valid;
+            count = other.count;
+            sel = other.sel;
+            data = other.data;
+
+            // Null out the old one
+            other.sel = nullptr;
+            other.data = nullptr;
+            other.count = 0;
+        }
+        return *this;
+    }
+
+    ~IVector() {
+      if (sel) {
+        free(sel);
+        sel = nullptr;
+      }
+      if (data) {
+        free(data);
+        data = nullptr;
+      }
+    }
 };
 
+struct ArtifactsLog {
+  // copy vectors
+  vector<std::pair<Vector, vector<Vector>>> agg_update_log;
+  vector<std::pair<Vector, Vector>> agg_combine_log;
+  vector<Vector> agg_finalize_log;
+  // copy buffers
+  vector<std::pair<IVector, vector<IVector>>> buffer_agg_update_log;
+  vector<std::pair<IVector, IVector>> buffer_agg_combine_log;
+  vector<IVector> buffer_agg_finalize_log;
+};
+
+void LogVector(Vector &vec, idx_t count, IVector &entry);
 
 static std::atomic<idx_t> global_thread_counter{0};
 
@@ -42,6 +103,7 @@ inline idx_t GetThreadId() {
 }
 
 struct LineageState {
+   static bool use_vector;
    static bool cache;
    static bool capture;
    // used to disabale lineage capture for aggregates
@@ -57,6 +119,7 @@ struct LineageState {
    
    static std::mutex g_log_lock;
    static thread_local ArtifactsLog* active_log;
+   static thread_local string active_log_key;
    static unordered_map<QID_OPID_TID, shared_ptr<ArtifactsLog>> logs;
 };
 
