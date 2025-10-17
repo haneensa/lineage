@@ -113,6 +113,9 @@ struct LineageState {
    static bool debug;
    static std::unordered_map<QID_OPID, LogicalOperatorType> lineage_types;
    static std::unordered_map<QID_OPID, vector<std::pair<Vector, int>>> lineage_store;
+   
+   static std::unordered_map<QID_OPID, vector<IVector>> lineage_store_buf;
+   
    static std::unordered_map<QID_OPID, vector<vector<idx_t>>> lineage_global_store;
    static std::unordered_map<QID, unordered_map<OPID, unique_ptr<LineageInfoNode>>> qid_plans;
    static std::unordered_map<QID, OPID> qid_plans_roots;

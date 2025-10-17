@@ -69,10 +69,19 @@ public:
         << EnumUtil::ToChars<LogicalOperatorType>(this->dependent_type) << std::endl;
    }
 
-    if (LineageState::lineage_store[table_name].size()) return;
-    LineageState::lineage_store[table_name] = std::move(lineage);
-    if (source_count == 2 || join_type=="RIGHT_SEMI" || join_type=="RIGHT") {
-      LineageState::lineage_store[table_name+"_right"] = std::move(lineage_right);
+
+    if (LineageState::use_vector) {
+      if (LineageState::lineage_store[table_name].size()) return;
+      LineageState::lineage_store[table_name] = std::move(lineage);
+      if (source_count == 2 || join_type=="RIGHT_SEMI" || join_type=="RIGHT") {
+        LineageState::lineage_store[table_name+"_right"] = std::move(lineage_right);
+      }
+    } else {
+      if (LineageState::lineage_store_buf[table_name].size()) return;
+      LineageState::lineage_store_buf[table_name] = std::move(lineage_buffer);
+      if (source_count == 2 || join_type=="RIGHT_SEMI" || join_type=="RIGHT") {
+        LineageState::lineage_store_buf[table_name+"_right"] = std::move(lineage_right_buffer);
+      }
     }
   }
    
@@ -80,6 +89,8 @@ public:
   // this way we don't have to duplicate size for the right side
   vector<std::pair<Vector, int>> lineage;
   vector<std::pair<Vector, int>> lineage_right;
+  vector<IVector> lineage_buffer;
+  vector<IVector> lineage_right_buffer;
   LogicalOperatorType dependent_type;
   idx_t query_id;
   idx_t operator_id;
@@ -164,17 +175,29 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
     // Extract annotations payload from left input
     if (!post && left_rid > 0 && LineageState::persist) {
       idx_t annotation_col = left_rid;
-      Vector annotations(input.data[annotation_col].GetType());
-      VectorOperations::Copy(input.data[annotation_col], annotations, input.size(), 0, 0);
-      state.lineage.push_back({annotations, input.size()});
+      if (LineageState::use_vector || this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) { 
+        Vector annotations(input.data[annotation_col].GetType());
+        VectorOperations::Copy(input.data[annotation_col], annotations, input.size(), 0, 0);
+        state.lineage.push_back({annotations, input.size()});
+      } else {
+        state.lineage_buffer.emplace_back();
+        auto& entry = state.lineage_buffer.back();
+        LogVector(input.data[annotation_col], input.size(), entry);
+      }
     }
 
     if (!post && this->source_count == 2 && LineageState::persist) {
       // Extract annotations payload from the right input
       idx_t annotation_col = input.ColumnCount() - 1;
-      Vector annotations(input.data[annotation_col].GetType());
-      VectorOperations::Copy(input.data[annotation_col], annotations, input.size(), 0, 0);
-      state.lineage_right.push_back({annotations, input.size()});
+      if (LineageState::use_vector) {
+        Vector annotations(input.data[annotation_col].GetType());
+        VectorOperations::Copy(input.data[annotation_col], annotations, input.size(), 0, 0);
+        state.lineage_right.push_back({annotations, input.size()});
+      } else {
+        state.lineage_right_buffer.emplace_back();
+        auto& entry = state.lineage_right_buffer.back();
+        LogVector(input.data[annotation_col], input.size(), entry);
+      }
     }
 
 

@@ -32,6 +32,7 @@ bool LineageState::use_internal_lineage = false;
 bool LineageState::persist = true;
 std::mutex LineageState::g_log_lock;
 std::unordered_map<string, vector<std::pair<Vector, int>>> LineageState::lineage_store;
+std::unordered_map<string, vector<IVector>> LineageState::lineage_store_buf;
 std::unordered_map<string, vector<vector<idx_t>>> LineageState::lineage_global_store;
 std::unordered_map<string, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
@@ -65,6 +66,7 @@ inline void PragmaClearLineage(ClientContext &context, const FunctionParameters 
   LineageState::qid_plans_roots.clear();
   LineageState::qid_plans.clear();
 
+  LineageState::lineage_store_buf.clear();
   LineageState::active_log_key = "";
   LineageState::active_log = nullptr;
   LineageState::logs.clear();
