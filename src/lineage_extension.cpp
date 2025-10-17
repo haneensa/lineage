@@ -320,6 +320,8 @@ static void LineageUDAUpdateFunction(Vector inputs[], AggregateInputData &aggr_i
   string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
   InitThreadLocalLog(qid_opid_tid);
 
+  if (!LineageState::persist) return;
+
   if (LineageState::use_vector) {
     Vector addresses(state_vector.GetType());
     VectorOperations::Copy(state_vector, addresses, count, 0, 0);
@@ -367,6 +369,9 @@ static void LineageUDACombineFunction(Vector &states_vector, Vector &combined, A
 
   string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
   InitThreadLocalLog(qid_opid_tid);
+  
+  if (!LineageState::persist) return;
+
   if (LineageState::use_vector) {
     Vector source(states_vector.GetType());
     VectorOperations::Copy(states_vector, source, count, 0, 0);
@@ -412,6 +417,8 @@ static void LineageUDAFinalize(Vector &states_vector, AggregateInputData &aggr_i
 
   string qid_opid_tid = to_string(bind.operator_id) + "_" + to_string(thread_id);
   InitThreadLocalLog(qid_opid_tid);
+  
+  if (!LineageState::persist) return;
 
   if (LineageState::use_vector) {
     Vector addresses(states_vector.GetType());
