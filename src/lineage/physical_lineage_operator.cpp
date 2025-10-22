@@ -9,6 +9,8 @@
 #include "duckdb/parallel/thread_context.hpp"
 #include "duckdb/planner/operator/logical_join.hpp"
 #include <cmath>
+#include <atomic>
+
 
 
 namespace duckdb {
@@ -29,9 +31,10 @@ PhysicalLineageOperator::PhysicalLineageOperator(vector<LogicalType> types, Phys
 
 class LineageGlobalState : public GlobalOperatorState {
   public:
-    LineageGlobalState() : cur_partition(0) {}
+    LineageGlobalState() : cur_partition(0), global_offset(0) {}
     
     std::atomic<idx_t> cur_partition;
+    std::atomic<idx_t> global_offset;
 };
 
 unsigned NBits(unsigned n) {
@@ -124,6 +127,8 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
                          GlobalOperatorState &gstate_p,
                          OperatorState &state_p) const {
     auto &state = state_p.Cast<PhysicalLineageState>();
+    auto &gstate = gstate_p.Cast<LineageGlobalState>();
+    idx_t count = input.size();
     state.n_input += input.size();
     if (LineageState::debug) {
       std::cout << " [PhysicalLineageOperator] opid: " << operator_id << "len(input): " << input.size() << " join_type:" <<  join_type << ", source_count: " << source_count 
@@ -148,9 +153,12 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
       for (idx_t i = 0; i < left_rid; i++) {
         chunk.data[i].Reference(input.data[i]);
       }
+      // use global offset. 
       // Append row identifier since it's hard to modify Chunk Get
-      chunk.data.back().Sequence(state.offset, 1, input.size());
-      state.offset += input.size();
+      idx_t g_offset = gstate.global_offset.fetch_add(count);
+      chunk.data.back().Sequence(g_offset, 1, input.size());
+      state.offset = g_offset;
+      // std::cout << count << " -> " << count + state.offset << " offset: " << state.offset << " partition " << state.partition_id << std::endl;
       return OperatorResultType::NEED_MORE_INPUT;
     }
 
@@ -203,10 +211,10 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
 
     if (!is_root && !pre) {
       // This is not the root, reindex complex annotations
-      chunk.data.back().Sequence(state.offset, 1, input.size());
-      state.offset += input.size();
-    } else if (pre) {
-      state.offset += input.size();
+      idx_t g_offset = gstate.global_offset.fetch_add(count);
+      chunk.data.back().Sequence(g_offset, 1, input.size());
+      state.offset = g_offset;
+      // std::cout << count << " -> " << count + state.offset << " offset: " << state.offset << " partition " << state.partition_id << std::endl;
     }
 
     return OperatorResultType::NEED_MORE_INPUT;
