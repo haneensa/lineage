@@ -35,14 +35,14 @@ class LineageGlobalState : public GlobalOperatorState {
       std::lock_guard<std::mutex> g(LineageState::g_log_lock);
       auto &ptr = LineageState::partitioned_store_buf[table_name];
       if (!ptr) {
-          ptr = make_shared_ptr<PartitionedLineage>();
+          ptr = make_uniq<PartitionedLineage>();
       }
-      partitions = ptr;
+      partitions = ptr.get();
     }
     
     std::atomic<idx_t> cur_partition;
     std::atomic<idx_t> global_offset;
-    shared_ptr<PartitionedLineage> partitions;
+    PartitionedLineage* partitions;
 };
 
 class PhysicalLineageState : public OperatorState {

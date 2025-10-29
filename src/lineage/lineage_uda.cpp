@@ -14,19 +14,21 @@ namespace duckdb {
 
 thread_local ArtifactsLog* LineageState::active_log = nullptr;
 thread_local string LineageState::active_log_key = "";
-unordered_map<string, shared_ptr<ArtifactsLog>> LineageState::logs;
+unordered_map<string, unique_ptr<ArtifactsLog>> LineageState::logs;
 
+// TODO: avoid using global var, figure out how to use op state
 void InitThreadLocalLog(string qid_opid_tid) {
   // Initialize thread-local log once
-  if (!LineageState::active_log || LineageState::active_log_key != qid_opid_tid) {
+  if (!LineageState::active_log || LineageState::active_log_key != qid_opid_tid
+      || LineageState::logs.find(qid_opid_tid) == LineageState::logs.end()) {
     std::lock_guard<std::mutex> guard(LineageState::g_log_lock);
     auto &shared_log = LineageState::logs[qid_opid_tid];  // creates default nullptr if not present
     if (!shared_log) {
-        shared_log = make_shared_ptr<ArtifactsLog>();
+        shared_log = make_uniq<ArtifactsLog>();
     }
     LineageState::active_log_key = qid_opid_tid;
     LineageState::active_log = shared_log.get();  // assign thread-local pointer
-  }
+  }  
 }
 
 struct LineageUDAAggState {};

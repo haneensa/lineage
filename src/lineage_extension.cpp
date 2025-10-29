@@ -37,23 +37,37 @@ std::unordered_map<string, vector<vector<idx_t>>> LineageState::lineage_global_s
 std::unordered_map<string, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<idx_t, unordered_map<idx_t, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
 std::unordered_map<idx_t, idx_t> LineageState::qid_plans_roots;
-unordered_map<string, shared_ptr<PartitionedLineage>> LineageState::partitioned_store_buf;
+unordered_map<string, unique_ptr<PartitionedLineage>> LineageState::partitioned_store_buf;
 
 std::string LineageExtension::Name() {
     return "lineage";
 }
 
 inline void PragmaClearLineage(ClientContext &context, const FunctionParameters &parameters) {
-  // std::cout << "Lineage Clear" << std::endl;
+  std::cout << "Lineage Clear" << std::endl;
   LineageGlobal::a.clear();
   LineageState::lineage_store.clear();
   LineageState::lineage_types.clear();
   LineageState::qid_plans_roots.clear();
   LineageState::qid_plans.clear();
 
+  LineageState::lineage_global_store.clear();
+  for (auto& e : LineageState::lineage_store_buf) {
+    for (auto& e2 : e.second) {
+      e2.clear();
+    }
+  }
   LineageState::lineage_store_buf.clear();
+  for (auto& e : LineageState::partitioned_store_buf) {
+    e.second->clear();
+  }
+  LineageState::partitioned_store_buf.clear();
+
   LineageState::active_log_key = "";
   LineageState::active_log = nullptr;
+  for (auto& e : LineageState::logs) {
+    e.second->clear();
+  }
   LineageState::logs.clear();
 
   FadeState::aggs.clear();

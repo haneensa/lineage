@@ -33,48 +33,10 @@ struct IVector {
     sel_t *sel = nullptr;
     data_ptr_t data = nullptr;
 
-    validity_t *validity;    // bitmap of nulls (64 bits per entry)
+    validity_t *validity = nullptr;    // bitmap of nulls (64 bits per entry)
     idx_t validity_bytes;    // size in bytes of validity mask
-
-    IVector() = default;
-
-    // Disable copy (prevents shallow copies)
-    IVector(const IVector &) = delete;
-    IVector &operator=(const IVector &) = delete;
-      // Enable move
-    IVector(IVector &&other) noexcept {
-        is_valid = other.is_valid;
-        count = other.count;
-        sel = other.sel;
-        data = other.data;
-
-        other.sel = nullptr;
-        other.data = nullptr;
-        other.count = 0;
-    }
-
-      IVector &operator=(IVector &&other) noexcept {
-        if (this != &other) {
-            // Free existing memory
-            if (sel) free(sel);
-            if (data) free(data);
-
-            // Steal resources
-            is_valid = other.is_valid;
-            count = other.count;
-            sel = other.sel;
-            data = other.data;
-
-            // Null out the old one
-            other.sel = nullptr;
-            other.data = nullptr;
-            other.count = 0;
-            other.is_valid = true;
-        }
-        return *this;
-    }
-
-    ~IVector() {
+                             
+    void clear() {
       if (sel) {
         free(sel);
         sel = nullptr;
@@ -82,6 +44,10 @@ struct IVector {
       if (data) {
         free(data);
         data = nullptr;
+      }
+      if (validity) {
+        free(validity);
+        validity = nullptr;
       }
     }
 };
@@ -96,6 +62,18 @@ struct PartitionedLineage {
   void fill_list_lineage(vector<vector<idx_t>>& lineage2D);
   void fill_local(vector<vector<IVector>>& store, vector<idx_t>& lineage1D);
   idx_t get_total_count();
+  void clear() {
+    for (auto& partition : left) {
+      for (auto& v : partition) {
+        v.clear();
+      }
+    }
+    for (auto& partition : right) {
+      for (auto& v : partition) {
+        v.clear();
+      }
+    }
+  }
 };
 
 
@@ -108,6 +86,27 @@ struct ArtifactsLog {
   vector<std::pair<IVector, vector<IVector>>> buffer_agg_update_log;
   vector<std::pair<IVector, IVector>> buffer_agg_combine_log;
   vector<std::pair<IVector, idx_t>> buffer_agg_finalize_log;
+  void clear() {
+    for (auto& e: buffer_agg_update_log) {
+      e.first.clear();
+      for (auto& e2 : e.second) {
+        e2.clear();
+      }
+    }
+    buffer_agg_update_log.clear();
+    agg_update_log.clear();
+    for (auto& e: buffer_agg_combine_log) {
+      e.first.clear();
+      e.second.clear();
+    }
+    buffer_agg_combine_log.clear();
+    agg_combine_log.clear();
+    for (auto& e: buffer_agg_finalize_log) {
+      e.first.clear();
+    }
+    buffer_agg_finalize_log.clear();
+    agg_finalize_log.clear();
+  }
 };
 
 void LogVector(Vector &vec, idx_t count, IVector &entry);
@@ -144,8 +143,8 @@ struct LineageState {
    static std::mutex g_log_lock;
    static thread_local ArtifactsLog* active_log;
    static thread_local string active_log_key;
-   static unordered_map<QID_OPID_TID, shared_ptr<ArtifactsLog>> logs;
-   static unordered_map<string, shared_ptr<PartitionedLineage>> partitioned_store_buf;
+   static unordered_map<QID_OPID_TID, unique_ptr<ArtifactsLog>> logs;
+   static unordered_map<string, unique_ptr<PartitionedLineage>> partitioned_store_buf;
 };
 
 unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,
