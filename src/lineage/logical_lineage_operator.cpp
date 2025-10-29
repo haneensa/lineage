@@ -11,6 +11,7 @@
 #include "duckdb/planner/operator/logical_join.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 namespace duckdb {
 
@@ -39,7 +40,7 @@ void LogicalLineageOperator::ResolveTypes()  {
   if (pre) { // strip annotations
     types.pop_back();
     return;
-  } else if (post) { // add annotations
+  } else if (post) {
     types.push_back(LogicalType::ROW_TYPE);
     return;
   }
@@ -165,6 +166,7 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
   }
   
   auto &child = generator.CreatePlan(*children[0]);
+  // std::cout << child.ToString() << std::endl;
   if (this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
     // LOGICAL_DELIM_JOIN is not used if it doesn't have any 
     // this has distinct and join we need to modify
@@ -192,10 +194,14 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
       agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
     } else {
       fname = "internal_lineage";
-      agg.types.push_back(LogicalType::BOOLEAN);
+      agg.types.push_back(LogicalType::BIGINT);
     }
     auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(context, DEFAULT_SCHEMA, fname);
     auto list_function = entry.functions.GetFunctionByArguments(context, {LogicalType::ROW_TYPE});
+    if (LineageState::use_internal_lineage) {
+      auto param_expr = make_uniq_base<Expression, BoundConstantExpression>(Value::BIGINT(operator_id));
+      children.push_back(std::move(param_expr));
+    }
     unique_ptr<FunctionData> bind_info = list_function.bind(context, list_function, children);
     auto list_aggregate = make_uniq<BoundAggregateExpression>(list_function, std::move(children), nullptr,
         std::move(bind_info), AggregateType::NON_DISTINCT);

@@ -16,7 +16,9 @@ include_directories(src/include)
 
 set(EXTENSION_SOURCES 
     src/lineage_logger.cpp
+    src/lineage/lineage_helper.cpp
     src/lineage/lineage_init.cpp
+    src/lineage/lineage_uda.cpp
     src/lineage_extension.cpp
     src/lineage/lineage_reader.cpp
     src/lineage/lineage_meta.cpp

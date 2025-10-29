@@ -60,6 +60,7 @@ void InitFuncs(DatabaseInstance& db_instance);
 // construct global 1D/2D per-op lineage
 // set |input| and |output| for each operators
 idx_t InitGlobalLineage(idx_t qid, idx_t opid);
+idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid);
 void GetCachedVals(idx_t qid, idx_t opid);
 
 idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,

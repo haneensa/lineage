@@ -31,23 +31,22 @@ text_file = open(qfile, "r")
 query = text_file.read().strip()
 query = ' '.join(query.split())
 text_file.close()
-con.execute("PRAGMA threads=1")
+con.execute("PRAGMA threads=32")
 if args.debug:
     con.execute("PRAGMA set_debug_lineage(True)")
 con.execute("PRAGMA set_lineage(True)")
-start = timer()
+con.execute("PRAGMA set_use_vector(False)")
+con.execute("PRAGMA set_use_internal_lineage(True)")
 print(query)
+start = timer()
+res = con.execute(query).df()
 end = timer()
-print(end - start)
-print(con.execute(query).df())
+q_time = end-start
+print(res)
+con.execute("PRAGMA set_use_vector(False)")
+con.execute("PRAGMA set_use_internal_lineage(False)")
 con.execute("PRAGMA set_lineage(False)")
 
-#start = timer()
-#lineage = con.execute("select * from global_lineage()").df()
-#end = timer()
-#print(end - start)
-
-#print(lineage)
 
 meta = con.execute("select * from pragma_latest_qid()").df()
 print(meta)
@@ -55,13 +54,16 @@ assert(len(meta) > 0)
 latest = len(meta)-1
 qid = meta['query_id'][latest]
 model = "count"
-
-con.execute(f"PRAGMA PrepareLineage({qid})")
+#model = "formula"
 
 start = timer()
-lineage = con.execute(f"select * from PolyEval({qid}, {model})").df()
+con.execute(f"PRAGMA PrepareLineageBuff({qid})")
 end = timer()
-print(end - start)
+p_time = end - start
+print("Exec: " , q_time, ", Post: ", p_time)
+print((p_time / q_time) * 100)
+
+lineage = con.execute(f"select * from PolyEval({qid}, {model})").df()
 print(lineage)
 
 con.execute("pragma clear_lineage")

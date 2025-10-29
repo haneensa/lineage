@@ -16,6 +16,7 @@
 #include "duckdb/function/aggregate_state.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 namespace duckdb {
 
@@ -370,6 +371,10 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
           auto rowid_colref = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::ROW_TYPE, rowids[0]);
           vector<unique_ptr<Expression>> children;
           children.push_back(std::move(rowid_colref));
+          if (LineageState::use_internal_lineage) {
+            auto param_expr = make_uniq_base<Expression, BoundConstantExpression>(Value::BIGINT(cur_op_id));
+            children.push_back(std::move(param_expr));
+          }
           unique_ptr<FunctionData> bind_info = list_function.bind(context, list_function, children);
           auto list_aggregate = make_uniq<BoundAggregateExpression>(
               list_function, std::move(children), nullptr, std::move(bind_info),
@@ -378,10 +383,12 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
           aggr.expressions.push_back(std::move(list_aggregate));
 
           idx_t new_col_id = aggr.groups.size() + aggr.expressions.size() + aggr.grouping_functions.size() - 1;
-          auto dummy = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
-              op->type, 1, new_col_id, 0);
-          dummy->AddChild(std::move(op));
-          op = std::move(dummy);
+          if (!LineageState::use_internal_lineage) {
+            auto dummy = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
+                op->type, 1, new_col_id, 0);
+            dummy->AddChild(std::move(op));
+            op = std::move(dummy);
+          }
           return new_col_id;
       } else {
         // Add LM (pre=true) to strip annotations

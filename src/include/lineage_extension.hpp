@@ -15,6 +15,8 @@
 
 namespace duckdb {
 
+AggregateFunction GetLineageUDAAllEvenFunction();
+
 class LineageExtension : public Extension {
 public:
    void Load(DuckDB &db) override;
