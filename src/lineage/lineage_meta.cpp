@@ -72,6 +72,7 @@ std::string serialize_to_json(idx_t qid, idx_t root) {
 
 void LineageMetaFunction::LineageMetaImplementation(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
   auto &bind_data = data_p.bind_data->CastNoConst<LineageMetaBindData>();
+  output.SetCardinality(0);
 
   idx_t count = LineageState::qid_plans_roots.size();
   idx_t limit = count % STANDARD_VECTOR_SIZE;

@@ -97,7 +97,9 @@ inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameter
   if (LineageState::debug) std::cout << "PRAGMA PrepapreLineage: " << qid << " " << root_id << 
   " " << EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][root_id]->type)
   << std::endl;
+  GetCachedVals(qid, root_id);
   InitGlobalLineage(qid, root_id);
+  RecomputeAggs(qid, root_id);
 }
 
 inline void PragmaPrepareFade(ClientContext &context, const FunctionParameters &parameters) {
@@ -107,13 +109,7 @@ inline void PragmaPrepareFade(ClientContext &context, const FunctionParameters &
   unordered_map<string, vector<string>> spec_map = parse_spec(spec_values);
   // 2. Read: annotations
   read_annotations(context, spec_map);
-  
-	int qid = 0; //parameters.values[0].GetValue<int>();
-  idx_t root_id = LineageState::qid_plans_roots[qid];
-  GetCachedVals(qid, root_id);
-  RecomputeAggs(qid, root_id);
 }
-
 
 void InitFuncs(DatabaseInstance& db_instance) {
     TableFunction pe_func("PolyEval", {LogicalType::INTEGER, LogicalType::VARCHAR},
