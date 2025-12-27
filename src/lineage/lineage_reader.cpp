@@ -1,3 +1,4 @@
+// TODO: refactor
 #include "lineage/lineage_reader.hpp"
 
 #include "lineage/lineage_init.hpp"
@@ -12,13 +13,15 @@ void LineageScanFunction::LineageScanImplementation(ClientContext &context, Tabl
   auto &gstate = data_p.global_state->Cast<LineageReadGlobalState>();
   auto &bind_data = data_p.bind_data->CastNoConst<LineageReadBindData>();
   
-  idx_t total_chunks = LineageState::lineage_store[bind_data.table_name].size();
+  // vector<vector<idx_t>>& glineage = LineageState::lineage_global_store[bind_data.table_name];
+  idx_t total_chunks = 0; // LineageState::partitioned_store_buf[bind_data.table_name].size();
   if (bind_data.chunk_count >= total_chunks) {
     return;
   }
-  idx_t count = LineageState::lineage_store[bind_data.table_name][bind_data.chunk_count].second;
+  idx_t count = 0; // use partitioned store LineageState::lineage_store_buf[bind_data.table_name][bind_data.chunk_count].count;
   output.data[0].Sequence(bind_data.offset, 1, count);
-  output.data[1].Reference(LineageState::lineage_store[bind_data.table_name][bind_data.chunk_count].first);
+  // TODO: show data in .data
+  // output.data[1].Reference(LineageState::lineage_store[bind_data.table_name][bind_data.chunk_count].first);
   output.SetCardinality(count);
   bind_data.chunk_count++;
   bind_data.offset += count;
@@ -44,6 +47,7 @@ unique_ptr<FunctionData> LineageScanFunction::LineageScanBind(ClientContext &con
   if (LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
     return_types.emplace_back(LogicalType::ROW_TYPE);
     names.emplace_back("in_rowid");
+    // TODO: encode right differently since we are accessing global_lineage
     if (result->source_id > 0) result->table_name+="_right";
   } else if (LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY
             || LineageState::lineage_types[result->table_name] == LogicalOperatorType::LOGICAL_DELIM_GET) {

@@ -47,14 +47,14 @@ void get_per_op_lineage_query(idx_t qid, idx_t root, vector<string>& queries) {
   auto &lop = LineageState::qid_plans[qid][root];
   
   std::ostringstream oss;
-  if (lop->has_lineage) {
+  if (lop->materializes_lineage) {
     int opid = root;
     string name = EnumUtil::ToChars<LogicalOperatorType>(lop->type);
     bool needs_unnest = lop->type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY
                         || lop->type == LogicalOperatorType::LOGICAL_DELIM_GET;
     string sink_table = lop->table_name.empty() ? name : lop->table_name;
-    int sink_opid = lop->sink_id;
-    int src_opid = lop->source_id[0];
+    int sink_opid = lop->sink_opid;
+    int src_opid = lop->source_opids[0];
     string src_table = LineageState::qid_plans[qid][src_opid]->table_name;
     string src_name = EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][src_opid]->type);
     src_table = src_table.empty() ? src_name : src_table;
@@ -74,7 +74,7 @@ void get_per_op_lineage_query(idx_t qid, idx_t root, vector<string>& queries) {
     queries.push_back(oss.str());
     if (lop->children.size() > 1) {
       std::ostringstream oss2;
-      src_opid = lop->source_id[1];
+      src_opid = lop->source_opids[1];
       src_table = LineageState::qid_plans[qid][src_opid]->table_name;
       src_name = EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][src_opid]->type);
       src_table = src_table.empty() ? src_name : src_table;
@@ -111,7 +111,8 @@ unique_ptr<GlobalTableFunctionState> LineageGFunction::LineageGInit(ClientContex
   }
 
   query = oss.str();
-  if (LineageState::debug) std::cout << query << std::endl;
+  //if (LineageState::debug) 
+    std::cout << query << std::endl;
   auto conn = make_uniq<Connection>(*context.db);
 
   auto result = conn->Query(query);

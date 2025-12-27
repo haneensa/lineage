@@ -225,7 +225,7 @@ idx_t PrepareSparseFade(idx_t qid, idx_t opid, idx_t agg_idx,
       return opid;
    } case LogicalOperatorType::LOGICAL_FILTER: {
       fnode.n_interventions = fade_data[children_opid[0]].n_interventions;
-      if (!lop_info->has_lineage || fnode.n_interventions < 1) return children_opid[0];
+      if (!lop_info->materializes_lineage || fnode.n_interventions < 1) return children_opid[0];
       fnode.annotations.assign(lop_info->n_output, 0);
       return opid;
    } case LogicalOperatorType::LOGICAL_ORDER_BY: {

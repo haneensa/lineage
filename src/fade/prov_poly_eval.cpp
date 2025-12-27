@@ -140,7 +140,7 @@ idx_t PolyEval(ClientContext &context, string model, idx_t qid, idx_t opid, idx_
       case LogicalOperatorType::LOGICAL_FILTER:
       case LogicalOperatorType::LOGICAL_TOP_N:
       case LogicalOperatorType::LOGICAL_ORDER_BY:
-      if (!lop_info->has_lineage) return children_opid[0];
+      if (!lop_info->materializes_lineage) return children_opid[0];
       vector<idx_t>& lineage = LineageState::lineage_global_store[ltable][0];
       auto& in_ann =  annotations_per_opid[children_opid[0]];
       auto& out_ann = annotations_per_opid[opid];

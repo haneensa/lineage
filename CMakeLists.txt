@@ -15,16 +15,16 @@ project(${TARGET_NAME})
 include_directories(src/include)
 
 set(EXTENSION_SOURCES 
-    src/lineage_logger.cpp
-    src/lineage/lineage_helper.cpp
+    src/lineage/lineage_buffer.cpp
+    src/lineage/lineage_blocks_reader.cpp
+    src/lineage/lineage_plan_build.cpp
+    src/lineage/lineage_postprocess.cpp
+    src/lineage/lineage_single_relation.cpp
     src/lineage/lineage_init.cpp
-    src/lineage/lineage_uda.cpp
     src/lineage_extension.cpp
     src/lineage/lineage_reader.cpp
     src/lineage/lineage_meta.cpp
     src/lineage/lineage_global.cpp
-    src/lineage/lineage_query.cpp
-    src/lineage/lq.cpp
     src/lineage/logical_lineage_operator.cpp
     src/lineage/physical_lineage_operator.cpp
     src/fade/physical_caching_operator.cpp

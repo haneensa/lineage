@@ -11,6 +11,7 @@ using Mask16 = uint16_t; // __mmask16
 namespace duckdb {
 
 typedef  pair<LogicalType, vector<void*>> OutPayload;
+typedef unordered_map<idx_t, vector<Vector>> Payload;
 
 struct FadeNode {
   idx_t n_interventions;
@@ -57,10 +58,6 @@ int get_output_opid(int query_id, idx_t operator_id);
 
 void InitFuncs(DatabaseInstance& db_instance);
 
-// construct global 1D/2D per-op lineage
-// set |input| and |output| for each operators
-idx_t InitGlobalLineage(idx_t qid, idx_t opid);
-idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid);
 void GetCachedVals(idx_t qid, idx_t opid);
 
 idx_t PrepareAggsNodes(idx_t qid, idx_t opid, idx_t agg_idx,

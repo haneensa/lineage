@@ -20,8 +20,6 @@
 
 namespace duckdb {
 
-unordered_map<void*, idx_t> pointer_to_opid;
-
 bool IsSPJUA(unique_ptr<LogicalOperator>& plan) {
   if ( (plan->type == LogicalOperatorType::LOGICAL_PROJECTION
       || plan->type == LogicalOperatorType::LOGICAL_ORDER_BY
@@ -124,118 +122,11 @@ idx_t ProcessJoin(unique_ptr<LogicalOperator> &op, vector<idx_t>& rowids, idx_t 
   return left_col_id + right_col_id;
 }
 
-
-// TODO: add two columns for the annotation for the partition id
-idx_t AnnotatePlan(unique_ptr<LogicalOperator> &op, idx_t query_id, idx_t& ref_opid) {
-  idx_t opid = ref_opid++;
-  auto lop =  make_uniq<LineageInfoNode>(opid, op->type);
-
-  for (auto& child : op->children) {
-    idx_t child_idx = AnnotatePlan(child, query_id, ref_opid);
-    lop->children.push_back(child_idx);
-  }
-
-  if (op->type == LogicalOperatorType::LOGICAL_GET) {
-    auto &get = op->Cast<LogicalGet>();
-    if (get.GetTable()) {
-      string table_name = get.GetTable()->name;
-      lop->table_name = table_name;
-      lop->columns = get.names;
-    }
-  } else if (op->type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
-    auto &join = op->Cast<LogicalComparisonJoin>();
-    lop->delim_flipped = join.delim_flipped;
-  }
-
-  
-  LineageState::qid_plans[query_id][opid] =  std::move(lop);
-  pointer_to_opid[(void*)op.get()] = opid;
-  return opid;
-}
-  
-idx_t find_first_opid_with_lineage_or_leaf(idx_t query_id, idx_t opid) {
-  auto &lop = LineageState::qid_plans[query_id][opid];
-  if (lop->has_lineage) return opid; // lineage sink
-  if (lop->children.empty()) return opid; // leaf
-  return find_first_opid_with_lineage_or_leaf(query_id, lop->children[0]);
-}
-
-// both the join and distinct take the same input (right delim dedup the right child, left the left child)
-// RIGHT DELIM JOIN: join.children[1] -> delim.children[0] -> distinct
-// delim.children[0] -> join.children[1]
-// LEFT DELIM JOIN: join.children[0] -> delim.children[0] -> distinct
-// join.children[0] -> ColumnDataScan -> join.children[0]
-// 1) access to distinct to add LIST(rowid) expression
-// 2) JOIN to add annotations from both sides
-void LinkParentDelimGets(idx_t query_id, idx_t opid, idx_t source_id) {
-  // find delim_get, set its source_id to join.children[1]
-  // set delim_get source_id to join.children[0]
-  auto &lop = LineageState::qid_plans[query_id][opid];
-  
-  if (lop->type == LogicalOperatorType::LOGICAL_DELIM_GET) {
-    if (LineageState::debug)
-      std::cout << "get delim get children " << opid << " " << source_id << std::endl;
-    lop->source_id.push_back(source_id);
-  }
-
-  for (idx_t i=0; i < lop->children.size(); ++i) {
-    idx_t child = lop->children[i];
-    LinkParentDelimGets(query_id, child, source_id);
-  }
-}
-
-void PostAnnotate(idx_t query_id, idx_t root, int &sink_id) {
-  auto &lop = LineageState::qid_plans[query_id][root];
-
-  vector<int> parents;
-  if (lop->has_lineage) {
-    if (lop->type == LogicalOperatorType::LOGICAL_DELIM_JOIN) {
-      if (LineageState::debug)
-        std::cout << "get delim get children: " << lop->delim_flipped << std::endl;
-      idx_t delim_scan_idx = lop->delim_flipped ? 1 : 0;
-      idx_t src_id = find_first_opid_with_lineage_or_leaf(query_id, lop->children[delim_scan_idx]);
-      idx_t delim_get_idx = lop->delim_flipped ? 0 : 1;
-      LinkParentDelimGets(query_id, lop->children[delim_get_idx], src_id);
-    }
-
-    if (lop->children.empty() == false) {
-      idx_t src_id = find_first_opid_with_lineage_or_leaf(query_id, lop->children[0]);
-      lop->source_id.push_back(src_id);
-    } else { 
-      // 1) if DELIM GET -> parent is distinct of DEILM JOIN
-      if (lop->type != LogicalOperatorType::LOGICAL_DELIM_GET) {
-        lop->source_id.push_back(root);
-      }
-    }
-    // TODO: if right semi join or mark, then it is pipelined (no lineage materialized)
-    //       find the first ancestor with has_lineage
-    lop->sink_id = sink_id;
-    
-    // TODO: remove LM for pipelined ops
-    //bool is_pipelined = lop->join_type == JoinType::RIGHT_SEMI || lop->join_type == JoinType::RIGHT_ANTI;
-    //if (is_pipelined) {
-    //  parents.push_back(sink_id);
-    parents.push_back(lop->source_id[0]);
-
-    if (lop->children.size() > 1) {
-      idx_t src_id = find_first_opid_with_lineage_or_leaf(query_id, lop->children[1]);
-      lop->source_id.push_back(src_id);
-      parents.push_back(src_id);
-    }
-  }
-
-  for (idx_t i=0; i < lop->children.size(); ++i) {
-    idx_t child = lop->children[i];
-    if (lop->has_lineage) sink_id = parents[i];
-    PostAnnotate(query_id, child, sink_id);
-  }
-}
-
 idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &context, idx_t query_id) {
   if (!op) return 0;
   vector<idx_t> rowids = {};
 
-  idx_t cur_op_id = pointer_to_opid[(void*)op.get()];
+  idx_t cur_op_id = LineageState::pointer_to_opid[(void*)op.get()];
   auto& lop = LineageState::qid_plans[query_id][cur_op_id];
 
   for (auto &child : op->children) {
@@ -362,54 +253,24 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
   } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
       auto &aggr = op->Cast<LogicalAggregate>();
      // if (!aggr.groups.empty()) {
-      if (LineageState::hybrid == false) {
         string fname = "list";
-          if (LineageState::use_internal_lineage) {
-            fname = "internal_lineage";
-          }
-          auto list_function = GetAggFunction(context, fname);
-          auto rowid_colref = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::ROW_TYPE, rowids[0]);
-          vector<unique_ptr<Expression>> children;
-          children.push_back(std::move(rowid_colref));
-          if (LineageState::use_internal_lineage) {
-            auto param_expr = make_uniq_base<Expression, BoundConstantExpression>(Value::BIGINT(cur_op_id));
-            children.push_back(std::move(param_expr));
-          }
-          unique_ptr<FunctionData> bind_info = list_function.bind(context, list_function, children);
-          auto list_aggregate = make_uniq<BoundAggregateExpression>(
-              list_function, std::move(children), nullptr, std::move(bind_info),
-              AggregateType::NON_DISTINCT
-          );
-          aggr.expressions.push_back(std::move(list_aggregate));
+        auto list_function = GetAggFunction(context, fname);
+        auto rowid_colref = make_uniq_base<Expression, BoundReferenceExpression>(LogicalType::ROW_TYPE, rowids[0]);
+        vector<unique_ptr<Expression>> children;
+        children.push_back(std::move(rowid_colref));
+        unique_ptr<FunctionData> bind_info = list_function.bind(context, list_function, children);
+        auto list_aggregate = make_uniq<BoundAggregateExpression>(
+            list_function, std::move(children), nullptr, std::move(bind_info),
+            AggregateType::NON_DISTINCT
+        );
+        aggr.expressions.push_back(std::move(list_aggregate));
 
-          idx_t new_col_id = aggr.groups.size() + aggr.expressions.size() + aggr.grouping_functions.size() - 1;
-          if (!LineageState::use_internal_lineage) {
-            auto dummy = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
-                op->type, 1, new_col_id, 0);
-            dummy->AddChild(std::move(op));
-            op = std::move(dummy);
-          }
-          return new_col_id;
-      } else {
-        // Add LM (pre=true) to strip annotations
-        auto pre_LM = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
-            op->type, 1, rowids[0], 0);
-        pre_LM->pre = true;
-        // change from [agg->child] to [agg->pre_LM->child]
-        auto child = std::move(op->children[0]);
-        pre_LM->AddChild(std::move(child));
-        op->children[0] = std::move(pre_LM);
-
-        // Add LM (post=true) to inject annotations
-        idx_t new_col_id = aggr.groups.size() + aggr.expressions.size() + aggr.grouping_functions.size();
-        auto post_LM = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
+        idx_t new_col_id = aggr.groups.size() + aggr.expressions.size() + aggr.grouping_functions.size() - 1;
+        auto dummy = make_uniq<LogicalLineageOperator>(aggr.estimated_cardinality, cur_op_id, query_id,
             op->type, 1, new_col_id, 0);
-        post_LM->post = true;
-        // change from [agg->pre_LM->child] to [post_LM->agg->pre_LM->child]
-        post_LM->AddChild(std::move(op));
-        op = std::move(post_LM);
+        dummy->AddChild(std::move(op));
+        op = std::move(dummy);
         return new_col_id;
-      }
     //  } // if simple agg, add operator below to remove annotations, and operator above to generate annotations
   } default: {}
   }
@@ -426,7 +287,7 @@ unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,
   // If root is create table, then add lineage operator below it
   if (LineageState::debug) std::cout << "Annotation Column: " << final_rowid << ", Operator Id: " << cur_op_id << std::endl;
   if (LineageState::debug) std::cout << "root -> " << EnumUtil::ToChars<LogicalOperatorType>(plan->type) << std::endl;
-  idx_t root_id = pointer_to_opid[(void*)plan.get()];
+  idx_t root_id = LineageState::pointer_to_opid[(void*)plan.get()];
   auto root = make_uniq<LogicalLineageOperator>(plan->estimated_cardinality,
       root_id, query_id, plan->type, 1/*src_cnt*/, final_rowid, 0, true);
   LineageState::qid_plans_roots[query_id] = root->operator_id;
@@ -439,9 +300,8 @@ unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,
   root->AddChild(std::move(plan));
   plan = std::move(root);
   
-  int sink_id = -1;
-  PostAnnotate(query_id, root_id, sink_id);
-  pointer_to_opid.clear();
+  PostAnnotate(query_id, root_id);
+  LineageState::pointer_to_opid.clear();
 
   return std::move(plan);
 }

@@ -98,17 +98,12 @@ inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameter
   " " << EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][root_id]->type)
   << std::endl;
   GetCachedVals(qid, root_id);
-  InitGlobalLineage(qid, root_id);
-  RecomputeAggs(qid, root_id);
-}
-
-inline void PragmaPrepareLineageBuff(ClientContext &context, const FunctionParameters &parameters) {
-	int qid = parameters.values[0].GetValue<int>();
-  idx_t root_id = LineageState::qid_plans_roots[qid];
-  if (LineageState::debug) std::cout << "PRAGMA PrepapreLineage: " << qid << " " << root_id << 
-  " " << EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][root_id]->type)
-  << std::endl;
   InitGlobalLineageBuff(context, qid, root_id);
+  RecomputeAggs(qid, root_id);
+  // persist these. use blocks reader to return the relational representation
+  vector<JoinAggBlocks>& lineage_blocks = LineageState::lineage_blocks[qid];
+  lineage_blocks.emplace_back();
+  CreateJoinAggBlocks(qid, root_id, lineage_blocks, {}, 0);
 }
 
 inline void PragmaPrepareFade(ClientContext &context, const FunctionParameters &parameters) {
@@ -146,10 +141,6 @@ void InitFuncs(DatabaseInstance& db_instance) {
         PragmaPrepareLineage, {LogicalType::INTEGER});
     ExtensionUtil::RegisterFunction(db_instance, prepare_lineage_fun);
     
-    auto prepare_lineagebuf_fun = PragmaFunction::PragmaCall("PrepareLineageBuff",
-        PragmaPrepareLineageBuff, {LogicalType::INTEGER});
-    ExtensionUtil::RegisterFunction(db_instance, prepare_lineagebuf_fun);
-
     auto whatif_fun = PragmaFunction::PragmaCall("Whatif",
         PragmaWhatif, {LogicalType::INTEGER, LogicalType::INTEGER, LogicalType::LIST(LogicalType::INTEGER),
         LogicalType::LIST(LogicalType::VARCHAR)});

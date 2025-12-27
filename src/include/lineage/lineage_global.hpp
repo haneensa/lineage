@@ -1,8 +1,11 @@
+/*
+Relational view of query level lineage using SQL of operator level lineage
+*/
 #pragma once
 
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/query_result.hpp"
-
+ 
 namespace duckdb {
 
 struct LineageGBindData : public TableFunctionData {

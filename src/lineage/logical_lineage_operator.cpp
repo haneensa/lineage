@@ -23,7 +23,7 @@ LogicalLineageOperator::LogicalLineageOperator(idx_t estimated_cardinality,
   left_rid(left_rid), right_rid(right_rid),  mark_join(false),
   pre(false), post(false) {
   this->estimated_cardinality = estimated_cardinality; 
-  LineageState::qid_plans[query_id][operator_id]->has_lineage = true;
+  LineageState::qid_plans[query_id][operator_id]->materializes_lineage = true;
   if (LineageState::debug)
     std::cout << "Add LogicalLineageOperator with child type:" << EnumUtil::ToChars<LogicalOperatorType>(dependent_type) << "\n";
 }
@@ -190,18 +190,9 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
     children.push_back(std::move(rowid_colref));
     auto& agg = delim.distinct.Cast<PhysicalHashAggregate>();
     string fname = "list";
-    if (LineageState::use_internal_lineage == false) {
-      agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
-    } else {
-      fname = "internal_lineage";
-      agg.types.push_back(LogicalType::BIGINT);
-    }
+    agg.types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
     auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(context, DEFAULT_SCHEMA, fname);
     auto list_function = entry.functions.GetFunctionByArguments(context, {LogicalType::ROW_TYPE});
-    if (LineageState::use_internal_lineage) {
-      auto param_expr = make_uniq_base<Expression, BoundConstantExpression>(Value::BIGINT(operator_id));
-      children.push_back(std::move(param_expr));
-    }
     unique_ptr<FunctionData> bind_info = list_function.bind(context, list_function, children);
     auto list_aggregate = make_uniq<BoundAggregateExpression>(list_function, std::move(children), nullptr,
         std::move(bind_info), AggregateType::NON_DISTINCT);

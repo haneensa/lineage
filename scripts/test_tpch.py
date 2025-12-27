@@ -35,16 +35,12 @@ con.execute("PRAGMA threads=32")
 if args.debug:
     con.execute("PRAGMA set_debug_lineage(True)")
 con.execute("PRAGMA set_lineage(True)")
-con.execute("PRAGMA set_use_vector(False)")
-con.execute("PRAGMA set_use_internal_lineage(True)")
 print(query)
 start = timer()
 res = con.execute(query).df()
 end = timer()
 q_time = end-start
 print(res)
-con.execute("PRAGMA set_use_vector(False)")
-con.execute("PRAGMA set_use_internal_lineage(False)")
 con.execute("PRAGMA set_lineage(False)")
 
 
@@ -57,7 +53,7 @@ model = "count"
 #model = "formula"
 
 start = timer()
-con.execute(f"PRAGMA PrepareLineageBuff({qid})")
+con.execute(f"PRAGMA PrepareLineage({qid})")
 end = timer()
 p_time = end - start
 print("Exec: " , q_time, ", Post: ", p_time)

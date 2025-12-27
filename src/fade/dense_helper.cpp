@@ -51,7 +51,7 @@ idx_t PrepareDenseFade(idx_t qid, idx_t opid, idx_t agg_idx, idx_t n_interventio
    } case LogicalOperatorType::LOGICAL_FILTER: {
       fnode.n_interventions = fade_data[children_opid[0]].n_interventions;
 		  idx_t n_masks = std::ceil(fnode.n_interventions / MASK_SIZE);
-      if (!lop_info->has_lineage || fnode.n_interventions < 1) return children_opid[0];
+      if (!lop_info->materializes_lineage || fnode.n_interventions < 1) return children_opid[0];
 			fnode.target_matrix = new Mask16[lop_info->n_output * n_masks];
       return opid;
    } case LogicalOperatorType::LOGICAL_ORDER_BY: {
@@ -198,7 +198,7 @@ idx_t InterventionDense(int qid, idx_t opid, idx_t agg_idx, idx_t thread_id,
    } case LogicalOperatorType::LOGICAL_PROJECTION: {
      return children_opid[0];
    } case LogicalOperatorType::LOGICAL_FILTER: {
-    if (!lop_info->has_lineage || fnode.n_interventions == 0 ) return children_opid[0];
+    if (!lop_info->materializes_lineage || fnode.n_interventions == 0 ) return children_opid[0];
     Mask16* in_tm =  fade_data[children_opid[0]].target_matrix;
     Mask16* out_tm = fnode.target_matrix;
     vector<idx_t>& lineage = LineageState::lineage_global_store[qid_opid][0];
