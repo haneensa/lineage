@@ -173,6 +173,11 @@ void WhatIfSparse(ClientContext& context, int qid, int aggid,
 
   // unique per spec
   // 1.a traverse query plan, allocate fade nodes, and any memory allocation
+  // if we use SPJAU blocks, then single block, single annotations column per table ?
+  // join: locate the lineage for the table to be intervened on,
+  // combine them by adjusting the code value. 
+  // do this for each intervened table. 
+  // finally, aggregation -> use the same old data structure. integer matrix |Interventions|x|output|
   PrepareSparseFade(qid, root_id, aggid, fade_data, spec_map);
   // 1.b holds post interventions output. n_output X n_interventions per worker
   PrepareAggsNodes(qid, root_id, aggid, fade_data);
