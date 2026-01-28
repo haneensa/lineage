@@ -114,7 +114,4 @@ con.execute("pragma clear_lineage")
 # create aggregate formula_plus(text) (sfunc = formula_plus_state, stype = formula_state, initcond = '(0,0)', finalfunc = formula_state2formula)
 # create aggregate formula_times(text) (sfunc = formula_time_state, stype = formula_state, initcond = '(1,0)', finalfunc = formula_state2formula)
 
-# 1. select add_provenance(REL);
-# 2. select create_provenance_mapping(ATTR, REL, ATTR);
-# 3. select formula(provenance(), ATTR) from ...
 # -> formula(), security(), where_provenance(), probability_evaluate(), boolean_st()
