@@ -27,16 +27,6 @@ set(EXTENSION_SOURCES
     src/lineage/lineage_global.cpp
     src/lineage/logical_lineage_operator.cpp
     src/lineage/physical_lineage_operator.cpp
-    src/fade/physical_caching_operator.cpp
-    src/fade/fade.cpp
-    src/fade/fade_reader.cpp
-    src/fade/get_predicates.cpp
-    src/fade/dense_helper.cpp
-    src/fade/sparse_helper.cpp
-    src/fade/sparse_aggs.cpp
-    src/fade/sparse_eval.cpp
-    src/fade/helper.cpp
-    src/fade/prov_poly_eval.cpp
 )
 
 

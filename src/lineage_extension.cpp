@@ -9,8 +9,6 @@
 #include "lineage/lineage_reader.hpp"
 #include "lineage/lineage_global.hpp"
 
-#include "fade/fade.hpp"
-
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/main/extension_util.hpp"
@@ -35,6 +33,20 @@ std::string LineageExtension::Name() {
     return "lineage";
 }
 
+inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameters &parameters) {
+	int qid = parameters.values[0].GetValue<int>();
+  idx_t root_id = LineageState::qid_plans_roots[qid];
+  if (LineageState::debug) std::cout << "PRAGMA PrepapreLineage: " << qid << " " << root_id << 
+  " " << EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][root_id]->type)
+  << std::endl;
+  InitGlobalLineageBuff(context, qid, root_id);
+  // persist these. use blocks reader to return the relational representation
+  vector<JoinAggBlocks>& lineage_blocks = LineageState::lineage_blocks[qid];
+  lineage_blocks.emplace_back();
+  CreateJoinAggBlocks(qid, root_id, lineage_blocks, {}, 0);
+}
+
+
 inline void PragmaClearLineage(ClientContext &context, const FunctionParameters &parameters) {
   LineageState::lineage_types.clear();
   LineageState::qid_plans_roots.clear();
@@ -45,45 +57,6 @@ inline void PragmaClearLineage(ClientContext &context, const FunctionParameters 
     e.second->clear();
   }
   LineageState::partitioned_store_buf.clear();
-
-  // FaDE owned data containers
-  FadeState::aggs.clear();
-  FadeState::sub_aggs.clear();
-  FadeState::payload_data.clear();
-  FadeState::cached_cols.clear();
-  FadeState::cached_cols_sizes.clear();
-  FadeState::table_col_annotations.clear();
-  FadeState::col_n_unique.clear();
-  FadeState::table_count.clear();
-  
-  for (auto& m : FadeState::input_data_map) {
-    for (auto& payload : m.second) {
-      if (payload.second.first == LogicalType::INTEGER) {
-        delete static_cast<int*>(payload.second.second);
-      } else {
-        delete static_cast<float*>(payload.second.second);
-      }
-    }
-  }
-  FadeState::input_data_map.clear();
-
-  for (auto& fade_res : FadeState::fade_results) {
-    for (auto& vars : fade_res.second.alloc_typ_vars) {
-      for (auto & vars_t : vars.second.second) {
-        if (vars.second.first == LogicalType::INTEGER) {
-          delete static_cast<int*>(vars_t);
-        } else {
-          delete static_cast<float*>(vars_t);
-        }
-      }
-    }
-  }
-
-  FadeState::fade_results.clear();
-
-  FadeState::codes.clear();
-  FadeState::cached_spec_map.clear();
-  FadeState::cached_spec_stack.clear();
 }
 
 inline void PragmaLineageDebug(ClientContext &context, const FunctionParameters &parameters) {
@@ -139,7 +112,9 @@ void LineageExtension::Load(DuckDB &db) {
         LineageGFunction::LineageGBind, LineageGFunction::LineageGInit);
     ExtensionUtil::RegisterFunction(db_instance, global_func);
     
-    InitFuncs(db_instance);
+    auto prepare_lineage_fun = PragmaFunction::PragmaCall("PrepareLineage",
+        PragmaPrepareLineage, {LogicalType::INTEGER});
+    ExtensionUtil::RegisterFunction(db_instance, prepare_lineage_fun);
 
     // JSON replacement scan
     auto &config = DBConfig::GetConfig(*db.instance);

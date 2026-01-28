@@ -1,3 +1,6 @@
+from fade_utils import PrepTargetMatrix
+from fade_utils import timed, Get_DB
+
 import os
 import argparse
 from pathlib import Path
@@ -29,65 +32,39 @@ parser.add_argument("--folder", type=str, default="queries/",
 args = parser.parse_args()
 
 # -----------------------------
-# Initialize TPCH database
+# Initialize TPCH database and Load lineage extension
 # -----------------------------
 dbname = f'tpch_{args.sf}.db'
-con = duckdb.connect(
-    dbname,
-    config={"allow_unsigned_extensions": "true"}
-)
-if not os.path.exists(dbname):
-    print(f"Creating TPCH database (sf={args.sf})")
-    con.execute("CALL dbgen(sf="+str(args.sf)+");")
+extensions = ["build/release/repository/v1.3.0/osx_amd64/lineage.duckdb_extension"]
+con = Get_DB(dbname, args.sf, extensions)
 
 # -----------------------------
-# Load lineage extension
-# -----------------------------
-# This assumes a locally built extension
-con.execute("LOAD 'build/release/repository/v1.3.0/osx_amd64/lineage.duckdb_extension'")
-
-# -----------------------------
-# Predicate definitions
+# Prep intervention matrix (target matrix)
 # User provided predicates projection list.
 # For each table with interventions, this generates:
 # 1) {table_name}_tm -> iid, mask_0, .., mask_n
 # 2) {table_name}_preds -> i, j, predicate string
 # -----------------------------
-predicates_per_table = {"lineitem": ["l_shipmode='MAIL'", "l_shipmode='SHIP'", "l_shipmode='REG_AIR'",
-              "l_shipmode='TRUCK'", "l_shipmode='RAIL'", "l_shipmode='AIR'", "l_shipmode='FOR'"]}
-for table, predicates in predicates_per_table.items():
-    proj_exprs = []
-    n_predicates = len(predicates)
-    mask_id = 0
-    preds_meta = []
-    # Pack predicates into into 64-bit chunks
-    for i in range(0, n_predicates, 64):
-        n_masks = min(n_predicates, 64)
-        mask_exprs = []
-        for j, pred in enumerate(predicates[i:i+64]):
-            mask_exprs.append(f"set_bit( bitstring('0', 64), {j}, ({pred})::int )")
-            preds_meta.append( [i, j, predicates[i+j] ])
-        mask_sql = " | ".join(mask_exprs)
-        proj_exprs.append( f"({mask_sql})::BITSTRING as mask_{mask_id}")
-        mask_id += 1
+predicates_per_table = {"lineitem": []}
 
-    con.execute(f"DROP TABLE IF EXISTS {table}_tm")
-    create_tm_sql = f"""create table {table}_tm as
-    select rowid as iid, {", ".join(proj_exprs)} from {table}"""
-    con.execute(create_tm_sql)
-    print(create_tm_sql)
+res =  con.execute("""select distinct l_extendedprice as v
+                   from lineitem order by l_extendedprice limit 10""")
+for row in res.fetchall():
+    predicates_per_table["lineitem"].append(f"l_extendedprice<='{row[0]}'")
 
-    preds_df = pd.DataFrame(preds_meta, columns=["i", "j", "pred"])
-    con.register("preds_tmp", preds_df)
-    con.execute(f"DROP TABLE IF EXISTS {table}_preds")
-    con.execute(f"create table {table}_preds as select * from preds_tmp")
+res =  con.execute("select distinct l_shipmode as v from lineitem")
+for row in res.fetchall():
+    predicates_per_table["lineitem"].append(f"l_shipmode='{row[0]}'")
+
+print(predicates_per_table)
+
+# TODO: create a function that takes n_interventions, and generate random masks
+PrepTargetMatrix(con, predicates_per_table)
 
 # -----------------------------
 # Read TPCH query
 # -----------------------------
-query = " ".join(
-    (Path(args.folder) / f"q{args.qid:02d}.sql").read_text().split()
-)
+query = " ".join((Path(args.folder) / f"q{args.qid:02d}.sql").read_text().split())
 print(f"1. Base Query:\n{query}")
 
 con.execute(f"PRAGMA threads={args.workers}")
@@ -100,23 +77,21 @@ if args.debug:
 
 con.execute("PRAGMA set_lineage(True)")
 
-start = timer()
-base_result = con.execute(query).df()
-end = timer()
-print(f"2. Query Result:\n {base_result}")
-print(f"Runtime took: {end - start:.5f}s")
+base_result = timed("Query Result", lambda: con.execute(query).df())
+print(f"{base_result}")
 
 # Preserve row identity for lineage joins
 base_result["idx"] = base_result.index
 
 con.execute("PRAGMA set_lineage(False)")
 
-n_output = len(args.oids)
+oids = args.oids
+n_output = len(oids)
 if len(base_result) < n_output:
     n_output = len(base_result)
-    args.oids = [x for x in range(n_output)]
+    oids = [x for x in range(n_output)]
 
-##### Internal Query id
+# Internal Query id
 qid = con.execute("select max(query_id) from pragma_latest_qid()").df().iat[0,0]
 print(f"Query ID: {qid}")
 
@@ -128,7 +103,7 @@ print(f"Lineage Post Processing took: {end - start:.5f}s")
 # TODO: make pragma that returns table names, operator ids
 # lineage table -> one for output id, the others are for input ids for that table
 spja_block = con.execute(f"""select * from read_block({qid})
-                         where output_id in {args.oids}""").df()
+                         where output_id in {oids}""").df()
 print(f"SPJAU Lineage Block Columns: {spja_block.columns}")
 
 # Identify lineage column referring to lineitem
@@ -136,24 +111,48 @@ lineitem_cols = [col for col in spja_block.columns if 'lineitem' in col]
 assert lineitem_cols, "No lineitem lineage column found"
 lineitem_col = lineitem_cols[0]
 
-#### Dense target matrix
+##################
+### SQL: dense target matrix
+### for row in dict_codes.itertuples(index=True):
+###    for k in range(n_interventions):
+# ##       out1[row.out, k] += TM[]
+##################
 n_interventions = con.execute("select count(*) as c from lineitem_preds").df().iat[0, 0]
 
-q = f"""
-with temp as (SELECT b.output_id as out, k, 
-sum( get_bit(l.mask_0, k::INT) * base.l_extendedprice) as v
-from spja_block as b, lineitem_tm as l, lineitem as base
-CROSS JOIN range({n_interventions}) AS r(k)
-where l.iid=b.{lineitem_col} and base.rowid=l.iid
-group by out, k)
+## run this for every 64 bit
+n_masks = (n_interventions + 63) // 64
+width = min(64, n_interventions)
+results = []
 
-select out, k, v, pred, base.* from temp JOIN lineitem_preds ON (k=i+j)
-JOIN base_result base ON (out=idx) order by v desc limit 3
-"""
+### TODO: specfiy n_interventions, use random masks
 start = timer()
-top_3 = con.execute(q).df()
+for mid in range(n_masks):
+    q = f"""
+    WITH temp AS (
+        SELECT
+            b.output_id AS out,
+            {mid} AS mid,
+            k,
+            SUM(get_bit(l.mask_{mid}, k::INT) * base.l_extendedprice) AS v
+        FROM spja_block b
+        JOIN lineitem_tm l ON l.iid = b.{lineitem_col}
+        JOIN lineitem base ON base.rowid = l.iid
+        CROSS JOIN range({width}) r(k)
+        GROUP BY out, k
+    )
+    SELECT
+        out, mid, k, v, pred
+    FROM temp
+    JOIN lineitem_preds ON (i = mid * 64 AND j = k)
+    ORDER BY v DESC
+    LIMIT 3
+    """
+    res = con.execute(q).df()
+    results.append(res)
+    # JOIN base_result base ON (out = idx)
 end = timer()
 
-print(f"Top 3: {top_3}\n Took: {end-start:.5f}s")
+print(results)
+print(f"Took: {end-start:.5f}s")
 
 con.execute("pragma clear_lineage")

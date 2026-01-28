@@ -30,23 +30,9 @@ def get_db():
     global _connection
     if _connection is None:
         print("Create new connection")
-        _connection = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+        _connection = duckdb.connect('intel.db', config={"allow_unsigned_extensions": "true"})
         _connection.execute("LOAD 'build/release/repository/v1.3.0/osx_amd64/lineage.duckdb_extension'")
-        load_intel_db(_connection)
     return _connection
-
-def load_intel_db(con):
-    create_sql = """CREATE TABLE readings as SELECT * FROM 'data/intel.csv'"""
-    con.execute(create_sql)
-    # hack since we don't have guards for null values
-    con.execute("""UPDATE readings SET temp = COALESCE(temp, 0);""")
-    con.execute("""UPDATE readings SET light = COALESCE(light, 0);""")
-    con.execute("""UPDATE readings SET voltage = COALESCE(voltage, 0);""")
-    con.execute("""UPDATE readings SET humidity = COALESCE(humidity, 0);""")
-
-    con.execute("""UPDATE readings SET moteid = COALESCE(moteid, -1);""")
-    for spec in specs:
-        con.execute(f"PRAGMA PrepareFade({spec})")
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -93,9 +79,8 @@ def query():
   print(q)
   if "hrint" in q:
     q  = q + " order by hrint"
-  #df = conn.execute(q).df()
   if 'stddev' in q and 'GROUP BY' in q and 'not' not in q:
-      con.execute("PRAGMA threads=1")
+      con.execute("PRAGMA threads=12")
       con.execute("PRAGMA set_debug_lineage(false);").df()
       con.execute("PRAGMA set_lineage(true);").df()
   start = time.time()

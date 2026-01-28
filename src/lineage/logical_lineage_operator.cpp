@@ -4,7 +4,6 @@
 
 #include "lineage/lineage_init.hpp"
 #include "lineage/physical_lineage_operator.hpp"
-#include "fade/physical_caching_operator.hpp"
 
 #include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
 #include "duckdb/execution/operator/join/physical_delim_join.hpp"
@@ -211,14 +210,6 @@ PhysicalOperator& LogicalLineageOperator::CreatePlan(ClientContext &context, Phy
     }
     
     if (LineageState::debug) { std::cout << delim.distinct.ToString() << std::endl; }
-  }
-  // if we need payload
-  if (LineageState::cache && this->dependent_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY) {
-    auto agg_types = child.children[0].get().GetTypes();
-    // Replace agg child with caching op
-    auto agg_child = child.children[0];
-    child.children[0] = generator.Make<PhysicalCachingOperator>(agg_types, agg_child,
-                                      operator_id, query_id, child);
   }
   
   return generator.Make<PhysicalLineageOperator>(types, child, operator_id, query_id, dependent_type,
