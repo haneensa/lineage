@@ -1,4 +1,6 @@
-/// these are lineage buffer data type and functions on them
+/// lineage_buffer.cpp
+/// Implements lineage buffer data structures and logging utilities.
+
 #include "lineage_extension.hpp"
 #include "lineage/lineage_init.hpp"
 
@@ -6,6 +8,7 @@
 
 namespace duckdb {
 
+/// Print an IVector of simple scalar types (int, bigint, etc.)
 void PrintLoggedVector(const IVector &entry, idx_t type_size) {
     std::cout << "IVector count: " << entry.count << "\n";
     // --- Print selection vector ---
@@ -46,6 +49,7 @@ void PrintLoggedVector(const IVector &entry, idx_t type_size) {
     std::cout << "\n";
 }
 
+/// Print a list of BIGINTs stored in an IVector
 void PrintListBigIntIVector(const IVector &entry) {
     if (!entry.data) {
         std::cout << "IVector is empty.\n";
@@ -88,6 +92,7 @@ void PrintListBigIntIVector(const IVector &entry) {
     std::cout << "=================================\n";
 }
 
+/// Materialize a DuckDB LIST(BIGINT) vector into an IVector
 void LogListBigIntVector(Vector &vec, idx_t count, IVector &entry) {
     D_ASSERT(vec.GetType().id() == LogicalTypeId::LIST);
     D_ASSERT(ListType::GetChildType(vec.GetType()).id() == LogicalTypeId::BIGINT);
@@ -151,6 +156,7 @@ void LogListBigIntVector(Vector &vec, idx_t count, IVector &entry) {
 }
 
 
+/// Materialize a scalar vector into an IVector
 void LogVector(Vector &vec, idx_t count, IVector &entry) {
     auto type_size = GetTypeIdSize(vec.GetType().InternalType());
     UnifiedVectorFormat udata;

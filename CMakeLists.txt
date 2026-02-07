@@ -22,9 +22,7 @@ set(EXTENSION_SOURCES
     src/lineage/lineage_single_relation.cpp
     src/lineage/lineage_init.cpp
     src/lineage_extension.cpp
-    src/lineage/lineage_reader.cpp
     src/lineage/lineage_meta.cpp
-    src/lineage/lineage_global.cpp
     src/lineage/logical_lineage_operator.cpp
     src/lineage/physical_lineage_operator.cpp
 )

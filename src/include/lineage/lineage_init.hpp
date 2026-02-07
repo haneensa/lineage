@@ -18,23 +18,6 @@ struct JoinAggBlocks {
   bool has_agg;
 };
 
-struct LineageState {
-   static bool cache;
-   static bool capture;
-   static bool persist;
-   static bool debug;
-   static std::unordered_map<QID_OPID, LogicalOperatorType> lineage_types;
-   
-   static std::unordered_map<QID_OPID, vector<vector<idx_t>>> lineage_global_store;
-   static std::unordered_map<QID, unordered_map<OPID, unique_ptr<LineageInfoNode>>> qid_plans;
-   static unordered_map<void*, idx_t> pointer_to_opid;
-   static std::unordered_map<QID, OPID> qid_plans_roots;
-   
-   static std::mutex g_log_lock;
-   static unordered_map<string, unique_ptr<PartitionedLineage>> partitioned_store_buf;
-   static unordered_map<QID, vector<JoinAggBlocks>> lineage_blocks;
-};
-
 unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,
                                       unique_ptr<LogicalOperator>& plan);
 
@@ -44,8 +27,41 @@ bool IsSPJUA(unique_ptr<LogicalOperator>& plan);
 // set |input| and |output| for each operators
 idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid);
 
-
 void CreateJoinAggBlocks(idx_t qid, idx_t opid, vector<JoinAggBlocks>& lineage_blocks,
                         vector<idx_t> lineage_idx, idx_t lineage_idx_cnt);
+
+struct LineageState {
+   static bool capture;
+   static bool persist;
+   static bool debug;
+   
+   static std::unordered_map<QID_OPID, LogicalOperatorType> lineage_types;
+   static std::unordered_map<QID, OPID> qid_plans_roots;
+   static std::unordered_map<QID, unordered_map<OPID, unique_ptr<LineageInfoNode>>> qid_plans;
+
+   // Maps logical operator pointers to ids.
+   // Valid only during optimization / plan rewrite.
+   static unordered_map<void*, idx_t> pointer_to_opid;
+   
+   static std::unordered_map<QID_OPID, vector<vector<idx_t>>> lineage_global_store;
+   static unordered_map<string, unique_ptr<PartitionedLineage>> partitioned_store_buf;
+   static unordered_map<QID, vector<JoinAggBlocks>> lineage_blocks;
+   
+   static std::mutex g_log_lock;
+   static void Clear() {
+      std::lock_guard<std::mutex> lock(g_log_lock);
+      lineage_types.clear();
+      qid_plans_roots.clear();
+      qid_plans.clear();
+      pointer_to_opid.clear();
+
+      lineage_global_store.clear();
+      for (auto& e : partitioned_store_buf) {
+        e.second->clear();
+      }
+      partitioned_store_buf.clear();
+   }
+};
+
 
 } // namespace duckdb
