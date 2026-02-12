@@ -61,7 +61,7 @@ out = run_with_lineage(query)
 print(out)
 
 
-meta = con.execute("select * from pragma_latest_qid()").df()
+meta = con.execute("select * from lineage_meta()").df()
 print(meta)
 assert(len(meta) > 0)
 latest = len(meta)-1

@@ -11,8 +11,7 @@ class PhysicalLineageOperator : public PhysicalOperator {
 public:
     PhysicalLineageOperator(vector<LogicalType> types, PhysicalOperator& child,
         idx_t operator_id, idx_t query_id, LogicalOperatorType dependent_type,
-        int source_count, idx_t left_rid, idx_t right_rid, bool is_root, string join_type,
-        bool pre=false, bool post=false);
+        int source_count, idx_t left_rid, idx_t right_rid, bool is_root, string join_type);
 
     OperatorResultType Execute(ExecutionContext &context,
                              DataChunk &input, 
@@ -40,8 +39,6 @@ public:
     LogicalOperatorType dependent_type;
     string join_type;
     int source_count;
-    bool pre;  // LM to strip away any annotations
-    bool post; // LM to add annotations
 };
 
 

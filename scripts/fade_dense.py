@@ -92,7 +92,7 @@ if len(base_result) < n_output:
     oids = [x for x in range(n_output)]
 
 # Internal Query id
-qid = con.execute("select max(query_id) from pragma_latest_qid()").df().iat[0,0]
+qid = con.execute("select max(query_id) from lineage_meta()").df().iat[0,0]
 print(f"Query ID: {qid}")
 
 start = timer()

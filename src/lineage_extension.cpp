@@ -31,14 +31,14 @@ bool LineageState::capture = false;
 bool LineageState::debug = false;
 bool LineageState::persist = true;
 
-// ---- Logical plan metadata (keyed by query id) ----
+// ---- Logical plan metadata (keyed by query id (QID), operator id (OPID)) ----
 std::unordered_map<QID_OPID, LogicalOperatorType> LineageState::lineage_types;
 std::unordered_map<QID, unordered_map<OPID, unique_ptr<LineageInfoNode>>> LineageState::qid_plans;
 std::unordered_map<QID, OPID> LineageState::qid_plans_roots;
 
 // ---- Lineage storage ----
 std::unordered_map<QID_OPID, vector<vector<idx_t>>> LineageState::lineage_global_store;
-unordered_map<string, unique_ptr<PartitionedLineage>> LineageState::partitioned_store_buf;
+unordered_map<QID_OPID, unique_ptr<PartitionedLineage>> LineageState::partitioned_store_buf;
 unordered_map<QID, vector<JoinAggBlocks>> LineageState::lineage_blocks;
 
 // ---- Synchronization ----
@@ -106,8 +106,8 @@ void LineageExtension::Load(DuckDB &db) {
     auto &db_instance = *db.instance;
     db_instance.config.optimizer_extensions.emplace_back(*optimizer_extension);
     
-    TableFunction pragma_func("pragma_latest_qid", {}, LineageMetaFunction::LineageMetaImplementation, 
-        LineageMetaFunction::LineageMetaBind);
+    TableFunction pragma_func("lineage_meta", {}, LineageMetaFunction::Implementation, 
+        LineageMetaFunction::Bind);
     ExtensionUtil::RegisterFunction(db_instance, pragma_func);
     
     TableFunction pragma_func_block("read_block", {LogicalType::INTEGER},

@@ -13,8 +13,8 @@ namespace duckdb {
 // Schema:
 //   query_id INTEGER
 //   plan     VARCHAR (JSON)
-void LineageMetaFunction::LineageMetaImplementation(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
-  auto &bind_data = data_p.bind_data->CastNoConst<LineageMetaBindData>();
+void LineageMetaFunction::Implementation(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+  auto &bind_data = data_p.bind_data->CastNoConst<BindData>();
   output.SetCardinality(0);
 
   idx_t count = LineageState::qid_plans_roots.size();
@@ -33,10 +33,10 @@ void LineageMetaFunction::LineageMetaImplementation(ClientContext &context, Tabl
   bind_data.offset += limit;
 }
 
-unique_ptr<FunctionData> LineageMetaFunction::LineageMetaBind(ClientContext &context, TableFunctionBindInput &input,
+unique_ptr<FunctionData> LineageMetaFunction::Bind(ClientContext &context, TableFunctionBindInput &input,
                                                 vector<LogicalType> &return_types, vector<string> &names) {
 
-  auto result = make_uniq<LineageMetaBindData>();
+  auto result = make_uniq<BindData>();
 
   names.emplace_back("query_id");
   return_types.emplace_back(LogicalType::INTEGER);

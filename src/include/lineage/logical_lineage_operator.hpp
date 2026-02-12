@@ -3,6 +3,7 @@
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/operator/logical_extension_operator.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/planner/operator/logical_join.hpp"
 
 namespace duckdb {
 
@@ -15,11 +16,31 @@ public:
     string GetName() const override {
         return "LINEAGE_OPERATOR";
     }
+    
     PhysicalOperator& CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) override;
 
+    bool IsJoin() const {
+        return dependent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN ||
+               dependent_type == LogicalOperatorType::LOGICAL_DELIM_JOIN;
+    }
+
+    bool IsSemiOrAnti(const LogicalJoin &join) const {
+    return join.join_type == JoinType::SEMI ||
+           join.join_type == JoinType::ANTI ||
+           join.join_type == JoinType::RIGHT_SEMI ||
+           join.join_type == JoinType::RIGHT_ANTI;
+    }
+
+    void HandleOperatorSpecificAdjustments();
+    void ApplyJoinRewrite();
+    void ApplyMarkJoinRewrite();
+    void RewriteDelimJoin(ClientContext &context, PhysicalOperator &child);
+    string ExtractJoinType();
+    
 protected:
     void ResolveTypes() override;
     vector<ColumnBinding> GetColumnBindings() override;
+
 
 public:
     idx_t operator_id;
@@ -31,8 +52,6 @@ public:
     bool is_root;
     bool mark_join;
     string join_type = "";
-    bool pre;  // LM to strip away any annotations
-    bool post; // LM to add annotations
 };
 
 }

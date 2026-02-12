@@ -3,6 +3,9 @@
 #include "lineage/lineage_plan.hpp"
 #include "lineage/lineage_buffer.hpp"
 
+#include <iostream>
+
+
 namespace duckdb {
 
 typedef idx_t OPID;
@@ -62,6 +65,20 @@ struct LineageState {
       partitioned_store_buf.clear();
    }
 };
+
+inline void LDebug(const string &msg) {
+  if (LineageState::debug) {
+    std::cout << "[DEBUG]" <<  msg << std::endl;
+  }
+}
+
+inline string TypesToString(const vector<LogicalType>& types) {
+  string types_str = "[";
+  for (auto &typ : types) 
+    types_str += typ.ToString() + ",";
+  types_str += "]";
+  return types_str;
+}
 
 
 } // namespace duckdb

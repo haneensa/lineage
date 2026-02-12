@@ -66,7 +66,7 @@ n_output = len(res)
 con.execute("PRAGMA set_lineage(False)")
 
 ##### internal query id
-qid = con.execute("select max(query_id) from pragma_latest_qid()").df().iat[0,0]
+qid = con.execute("select max(query_id) from lineage_meta()").df().iat[0,0]
 print(f"Query ID: {qid}")
 
 start = timer()

@@ -19,7 +19,6 @@ void BlockReaderFunction::Implementation(ClientContext &context, TableFunctionIn
   idx_t count = join_agg_block.n;
   idx_t start = bind_data.offset;
   idx_t limit = std::min<idx_t>(STANDARD_VECTOR_SIZE, count - start);
-  // std::cout << count << " " << start << " " << limit << std::endl;
   if (start >= count) return;
 
   // forward lineage
