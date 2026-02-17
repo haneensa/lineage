@@ -1,0 +1,19 @@
+# name: test/sql/api.test
+# description: test lineage capture and querying
+# group: [sql]
+
+# Before we load the extension, this will fail
+statement error
+PRAGMA set_lineage(True);
+----
+
+# Require statement will ensure this test is run with this extension loaded
+statement ok
+LOAD lineage;
+
+# Confirm the extension works
+statement ok
+PRAGMA set_lineage(True);
+
+statement ok
+PRAGMA set_lineage(False);
