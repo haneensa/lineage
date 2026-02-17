@@ -22,11 +22,9 @@ PhysicalLineageOperator::PhysicalLineageOperator(vector<LogicalType> types, Phys
       operator_id(operator_id), query_id(query_id),
       left_rid(left_rid), right_rid(right_rid), join_type(join_type) {
 
-      if (LineageState::debug) {
-        LDebug(StringUtil::Format("opid: {}, join_type: {}, source_count: {}, left_rid: {}, right_rid: {}, dependent_type: {}",
-              operator_id, join_type, source_count,  left_rid, right_rid, EnumUtil::ToChars<LogicalOperatorType>(dependent_type)));
-        LDebug("PhysicalLineageOperator " + child.ToString());
-      }
+      LDEBUG(StringUtil::Format("opid: %d, join_type: %s, source_count: %d, left_rid: %d, right_rid: %d, dependent_type: ",
+            operator_id, join_type, source_count,  left_rid, right_rid), EnumUtil::ToChars<LogicalOperatorType>(dependent_type));
+      LDEBUG("PhysicalLineageOperator ", child.ToString());
 
       children.push_back(child);
 }
@@ -60,11 +58,9 @@ public:
     if (LineageState::capture == false || LineageState::persist == false) return;
     
     string table_name = to_string(query_id) + "_" + to_string(operator_id);
-    if (LineageState::debug) {
-      std::cout << "[DEBUG] <persist lineage> " << "qid_opid:" <<  table_name  << ", left len: " << lineage.size()
-        << ", right len: " << lineage_right.size() << ", type: "
-        << EnumUtil::ToChars<LogicalOperatorType>(this->dependent_type) << std::endl;
-   }
+    LDEBUG("[DEBUG] <persist lineage> ", "qid_opid:",  table_name, ", left len: ", lineage.size()
+        , ", right len: ", lineage_right.size(), ", type: "
+        , EnumUtil::ToChars<LogicalOperatorType>(this->dependent_type));
 
     auto &gstate = op.op_state->Cast<LineageGlobalState>();
     std::lock_guard<std::mutex> g(gstate.partitions->p_lock);
@@ -126,13 +122,13 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
     auto &gstate = gstate_p.Cast<LineageGlobalState>();
     idx_t count = input.size();
     state.n_input += input.size();
-    if (LineageState::debug) {
-      auto input_types = input.GetTypes();
-      auto chunk_types = chunk.GetTypes();
-      LDebug( StringUtil::Format("opid: %d, |input|: %d, |columns|: %d, \ninput.types: %s \nchunk.types: %s",
-            operator_id, input.size(), input.ColumnCount(),
-            TypesToString(input_types), TypesToString(chunk_types)) );
-    }
+    
+    auto input_types = input.GetTypes();
+    auto chunk_types = chunk.GetTypes();
+    LDEBUG( StringUtil::Format("opid: %d, |input|: %d, |columns|: %d,",
+          operator_id, input.size(), input.ColumnCount()),
+          "\ninput.types: ", TypesToString(input_types),
+          " \nchunk.types: %s", TypesToString(chunk_types));
 
     // Right semi join -  pass annotations to parent since it is single annotations
     if (left_rid == 0 && right_rid > 0) {

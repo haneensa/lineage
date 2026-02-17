@@ -52,7 +52,7 @@ idx_t PartitionedLineage::fill_list_lineage(vector<vector<idx_t>>& glineage) {
   for (auto &partition : left) {
     idx_t cur = 0;
     
-    LDebug(StringUtil::Format("|partition|: {}", partition.size()));
+    LDEBUG("|partition|: {}", partition.size());
     
     for (auto& entry :partition) {
       if (!entry.data || entry.count == 0) continue;
@@ -149,8 +149,8 @@ idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid) {
     children_opid.push_back(cid);
   }
 
-  LDebug(StringUtil::Format("GetCachedLineage: {}, table: {}",
-        EnumUtil::ToChars<LogicalOperatorType>(lop_info->type), table));
+  LDEBUG("GetCachedLineage: ", EnumUtil::ToChars<LogicalOperatorType>(lop_info->type),
+        ", table: {}",table);
 
   vector<vector<idx_t>>& store = LineageState::lineage_global_store[table];
 
@@ -169,7 +169,7 @@ idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid) {
       idx_t total_count = LineageState::partitioned_store_buf[table]->get_total_count();
       LineageState::partitioned_store_buf[table]->fill_lineage(true /*is_left*/, store[0], total_count);
       lop_info->n_output = store[0].size();
-      LDebug(StringUtil::Format("|store[0]|: {} {} ", store[0].size(), total_count));
+      LDEBUG("|store[0]|:  ", store[0].size(), " ", total_count);
       return opid;
    }
 
@@ -188,8 +188,7 @@ idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid) {
       LineageState::partitioned_store_buf[table]->fill_lineage(true, store[0], total_count);
 
       lop_info->n_output = store[0].size();
-      LDebug(StringUtil::Format("|store[0]|: {} |store[1]|: {}, total_count: {}",
-            store[0].size(), store[1].size(), total_count));
+      LDEBUG("|store[0]|: ", store[0].size(), " |store[1]|: ", store[1].size(), "total_count: ", total_count);
       return opid;
    }
    // -------------------------------------------------
@@ -200,7 +199,7 @@ idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid) {
       idx_t total_count = LineageState::partitioned_store_buf[table]->fill_list_lineage(store);
       lop_info->n_output = store.size();
       lop_info->n_input = total_count;
-      LDebug(StringUtil::Format("total_count: {} |store|: {}", total_count, store.size()));
+      LDEBUG("total_count: ", total_count, " |store|: ", store.size());
       return opid;
    }
    default: {}

@@ -87,9 +87,8 @@ idx_t HandleFilter(unique_ptr<LogicalOperator> &op, vector<idx_t> &rowids) {
   if (op->children[0]->type == LogicalOperatorType::LOGICAL_EXTENSION_OPERATOR) {
       if (op->children[0]->Cast<LogicalLineageOperator>().mark_join) { // pull up lineage op
           auto lop = std::move(op->children[0]);
-          LDebug( StringUtil::Format("pull up lineage op {} {} {} {}", rowids[0],
-            filter.expressions.size(), filter.projection_map.size(),
-          lop->Cast<LogicalLineageOperator>().left_rid) );
+          LDEBUG("pull up lineage op:", rowids[0], " ", filter.expressions.size(), " ",
+              filter.projection_map.size(), " ", lop->Cast<LogicalLineageOperator>().left_rid) ;
 
           lop->Cast<LogicalLineageOperator>().dependent_type = op->type;
           idx_t child_left_rid = lop->Cast<LogicalLineageOperator>().left_rid;
@@ -99,12 +98,8 @@ idx_t HandleFilter(unique_ptr<LogicalOperator> &op, vector<idx_t> &rowids) {
             filter.projection_map.push_back(child_left_rid);
             lop->Cast<LogicalLineageOperator>().left_rid = filter.projection_map.size()-1; 
             new_col_id = filter.projection_map.size()-1; 
-            string projection_map_str = "";
-            for (idx_t i=0; i < filter.projection_map.size(); i++)
-              projection_map_str +=  "(" + to_string(i) + ":" + to_string(filter.projection_map[i]) + ")";
-            LDebug(StringUtil::Format("{} {} {} [{}]", child_left_rid,
-                  lop->Cast<LogicalLineageOperator>().left_rid, new_col_id,
-                  projection_map_str) );
+            LDEBUG(child_left_rid, " ",  lop->Cast<LogicalLineageOperator>().left_rid, " ", new_col_id,
+                  MapToString(filter.projection_map));
           }
           op->children[0] = std::move(lop->children[0]);
           lop->children[0] = std::move(op);
@@ -133,8 +128,8 @@ idx_t HandleRightSemiJoin(unique_ptr<LogicalOperator> &op,
     right_col_id = rowids[1];
   }
 
-  LDebug(StringUtil::Format("HandleRightSemiJoin {} {} {} {} {}", right_col_id, rowids[0], rowids[1],
-        join.left_projection_map.size(), join.right_projection_map.size()));
+  LDEBUG("HandleRightSemiJoin: ",  right_col_id, " ", rowids[0], " ", rowids[1],
+        " ", join.left_projection_map.size(), " ", join.right_projection_map.size());
   const int source_count = 1;
   auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id,
                                               query_id, op->type, source_count,  0, right_col_id);
@@ -158,7 +153,7 @@ idx_t HandleLeftSemiJoin(unique_ptr<LogicalOperator> &op,
     left_col_id = rowids[0];
   }
   
-  LDebug( StringUtil::Format("HandleLeftSemiJoin: {} {}", left_col_id,  join.left_projection_map.size()) );
+  LDEBUG("HandleLeftSemiJoin: ", left_col_id,  " ", join.left_projection_map.size());
   const int source_count = 1;
   auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
       op->type, source_count, left_col_id, 0);
@@ -193,9 +188,10 @@ idx_t HandleRegularJoin(unique_ptr<LogicalOperator> &op,
     right_col_id = rowids[1];
   }
 
-  LDebug( StringUtil::Format("HandleRegularJoin: {} {} {} {} {} {}", EnumUtil::ToChars<JoinType>(join.join_type),
-        left_col_id + right_col_id, left_col_id, right_col_id, join.left_projection_map.size(),
-        join.right_projection_map.size()) );
+  LDEBUG("HandleRegularJoin: ", EnumUtil::ToChars<JoinType>(join.join_type),
+        " ", left_col_id + right_col_id, " ", left_col_id, " ", right_col_id,
+        " ", join.left_projection_map.size(),
+        " ", join.right_projection_map.size());
 
   const int source_count = 2;
   auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
@@ -204,6 +200,7 @@ idx_t HandleRegularJoin(unique_ptr<LogicalOperator> &op,
   op = std::move(lop);
   return left_col_id + right_col_id;
 }
+
 
 idx_t HandleJoin(unique_ptr<LogicalOperator> &op,
                  vector<idx_t> &rowids,
@@ -264,7 +261,7 @@ idx_t HandleOperator(unique_ptr<LogicalOperator> &op,
       return col_id;
     } case LogicalOperatorType::LOGICAL_DELIM_GET: { // duplicate eliminated scan (output of distinct)
       auto &get = op->Cast<LogicalDelimGet>();
-      LDebug( StringUtil::Format("table_index: {} len(types): {}", get.table_index,  get.chunk_types.size()) );
+      LDEBUG("table_index: ", get.table_index, ", len(types): ", get.chunk_types.size());
       int col_id = get.chunk_types.size();
       get.chunk_types.push_back(LogicalType::LIST(LogicalType::ROW_TYPE));
       auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
@@ -281,7 +278,7 @@ idx_t HandleOperator(unique_ptr<LogicalOperator> &op,
       // add lineage op to generate ids
       auto& col = op->Cast<LogicalCTERef>();
       idx_t col_id = col.chunk_types.size();
-      LDebug( StringUtil::Format("CETRef: {} {}", col_id, col.bound_columns[0]) );
+      LDEBUG("CETRef: ", col_id, " ", col.bound_columns[0]);
       col.chunk_types.push_back(LogicalType::ROW_TYPE);
       col.bound_columns.push_back("rowid");
       return col_id;
@@ -312,7 +309,7 @@ idx_t HandleOperator(unique_ptr<LogicalOperator> &op,
     auto &join = op->Cast<LogicalUnconditionalJoin>();
     idx_t left_col_id = rowids[0];
     idx_t right_col_id = rowids[1];
-    LDebug(StringUtil::Format("HandleCross: %d %d", left_col_id, right_col_id));
+    LDEBUG("HandleCross: ",  left_col_id, right_col_id);
     const int source_count = 2;
     auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
         op->type, source_count, left_col_id, right_col_id);
@@ -335,12 +332,8 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
 
   idx_t op_id = LineageState::pointer_to_opid[(void*)op.get()];
 
-  if (LineageState::debug) {
-    string rowids_str = "";
-    for (int i = 0; i < rowids.size(); ++i)  rowids_str += ", " + to_string(rowids[i]);
-    std::cout << "InjectLineageOperator: type: " << EnumUtil::ToChars<LogicalOperatorType>(op->type) <<
-          ", name: " << op->GetName() <<  " op_id: " << op_id << " rowids:[ " << rowids_str << " ]" << std::endl;
-  }
+  LDEBUG("InjectLineageOperator: type: ", EnumUtil::ToChars<LogicalOperatorType>(op->type),
+        ", name: ", op->GetName(),  " op_id: ", op_id,  " rowids:[ ", MapToString(rowids), " ]" );
   return HandleOperator(op, context, query_id, rowids, op_id);
 }
 
@@ -352,8 +345,8 @@ unique_ptr<LogicalOperator> AddLineage(OptimizerExtensionInput &input,
   idx_t final_rowid = InjectLineageOperator(plan, input.context, query_id);
   // inject lineage op at the root of the plan to extract any annotation columns
   // If root is create table, then add lineage operator below it
-  LDebug( StringUtil::Format("root: {}, Annotation Column: {}, Operator Id: {}",
-        EnumUtil::ToChars<LogicalOperatorType>(plan->type), final_rowid, cur_op_id) );
+  LDEBUG("root: ", EnumUtil::ToChars<LogicalOperatorType>(plan->type),
+         "Annotation Column: ",  final_rowid, " Operator Id: ", cur_op_id);
   idx_t root_id = LineageState::pointer_to_opid[(void*)plan.get()];
   auto root = make_uniq<LogicalLineageOperator>(plan->estimated_cardinality,
       root_id, query_id, plan->type, 1/*src_cnt*/, final_rowid, 0, true);

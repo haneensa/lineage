@@ -66,11 +66,14 @@ struct LineageState {
    }
 };
 
-inline void LDebug(const string &msg) {
-  if (LineageState::debug) {
-    std::cout << "[DEBUG]" <<  msg << std::endl;
-  }
+inline std::string MapToString(const std::vector<idx_t> &vec) {
+    std::ostringstream oss;
+    for (idx_t i = 0; i < vec.size(); i++) {
+        oss << "(" << i << ":" << vec[i] << ")";
+    }
+    return oss.str();
 }
+
 
 inline string TypesToString(const vector<LogicalType>& types) {
   string types_str = "[";
@@ -79,6 +82,26 @@ inline string TypesToString(const vector<LogicalType>& types) {
   types_str += "]";
   return types_str;
 }
+
+template<typename T>
+void PrintArgs(T&& t) {
+    std::cout << std::forward<T>(t);
+}
+
+template<typename T, typename... Ts>
+void PrintArgs(T&& t, Ts&&... ts) {
+    std::cout << std::forward<T>(t);
+    PrintArgs(std::forward<Ts>(ts)...);
+}
+
+#define LDEBUG(...) \
+    do { \
+        if (LineageState::debug) { \
+            std::cout << "[LINEAGE] "; \
+            PrintArgs(__VA_ARGS__); \
+            std::cout << std::endl; \
+        } \
+    } while (0)
 
 
 } // namespace duckdb

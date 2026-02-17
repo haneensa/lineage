@@ -21,22 +21,22 @@ LogicalLineageOperator::LogicalLineageOperator(idx_t estimated_cardinality,
   LineageState::qid_plans[query_id][operator_id]->materializes_lineage = true;
   string table_name = to_string(query_id) + "_" + to_string(operator_id);
   LineageState::lineage_types[table_name] = dependent_type;
-  LDebug( StringUtil::Format("Add LogicalLineageOperator with child type: {}",
-         EnumUtil::ToChars<LogicalOperatorType>(dependent_type)) );
+  LDEBUG("Add LogicalLineageOperator with child type: ",
+         EnumUtil::ToChars<LogicalOperatorType>(dependent_type));
 }
 
 void LogicalLineageOperator::ApplyMarkJoinRewrite() {
   // if mark join, then need to move the end of the left child to the last column
   types.erase(types.begin() + left_rid);
   types.push_back(LogicalType::ROW_TYPE);
-  LDebug( StringUtil::Format("Mark Join: {} {} {}", left_rid, TypesToString(types)) );
+  LDEBUG("Mark Join: ", left_rid, TypesToString(types));
 }
 
 void LogicalLineageOperator::ApplyJoinRewrite() {
-  LDebug( StringUtil::Format("Child[0] types with left_rid: %d %s",
-        left_rid,TypesToString(children[0]->children[0]->types)) );
-  LDebug( StringUtil::Format("Child[1] types with right_rid: %d %s",
-        left_rid,TypesToString(children[0]->children[1]->types)) );
+  LDEBUG("Child[0] types with left_rid: ",
+        left_rid,TypesToString(children[0]->children[0]->types));
+  LDEBUG("Child[1] types with right_rid: ",
+        left_rid,TypesToString(children[0]->children[1]->types));
   
   if (dependent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN &&
       this->IsSemiOrAnti( children[0]->Cast<LogicalJoin>() )) {
@@ -80,8 +80,8 @@ void LogicalLineageOperator::ResolveTypes()  {
 
   // Copy Child Types
   types = children[0]->types;
-  LDebug( StringUtil::Format("ResolveTypes: {} {} {}",
-      operator_id, EnumUtil::ToChars(dependent_type), TypesToString(types)) );
+  LDEBUG("ResolveTypes: ",
+      operator_id, EnumUtil::ToChars(dependent_type), TypesToString(types));
   
   HandleOperatorSpecificAdjustments();
 }
@@ -97,11 +97,11 @@ vector<ColumnBinding> LogicalLineageOperator::GetColumnBindings() {
     return child_bindings;
   }
 
-  if (LineageState::debug) {
-    std::cout << this->operator_id << "[DEBUG] Child column bindings " <<  EnumUtil::ToChars<LogicalOperatorType>(dependent_type) << "\n";
-    for (auto &binding : child_bindings) { std::cout << binding.ToString() << " ";}
-    std::cout << "\n";
-  }
+  string child_bindings_str = "";
+  if (LineageState::debug)
+  for (auto &binding : child_bindings) { child_bindings_str += binding.ToString(); }
+  LDEBUG(this->operator_id, "[DEBUG] Child column bindings ",  EnumUtil::ToChars<LogicalOperatorType>(dependent_type),
+      " ", child_bindings_str);
 
   if (this->dependent_type == LogicalOperatorType::LOGICAL_DELIM_GET) { 
     return child_bindings; 
@@ -111,17 +111,19 @@ vector<ColumnBinding> LogicalLineageOperator::GetColumnBindings() {
     auto& join = children[0]->children[0]->Cast<LogicalJoin>();
 
     string join_binding_str = "";
-    for (auto &binding : join.children[0]->GetColumnBindings()) { join_binding_str += binding.ToString() + " "; }
-    LDebug(StringUtil::Format("mark join binding: {} {} {} ( join left: {} )",
-          left_rid, child_bindings.size(), types.size(), join_binding_str) );
+    if (LineageState::debug)
+      for (auto &binding : join.children[0]->GetColumnBindings()) { join_binding_str += binding.ToString() + " "; }
+    LDEBUG("mark join binding: ", left_rid, " ", child_bindings.size(),  " ",types.size(),
+            " ( join left: {} )", join_binding_str);
 
     auto left_most = child_bindings[left_rid];
     child_bindings.erase(child_bindings.begin() + left_rid);
     child_bindings.push_back(left_most);
     // get bindings of child
     string child_binding_str = "";
-    for (auto &binding : child_bindings) { child_binding_str += binding.ToString() + " "; }
-    LDebug("child binding:  "+ child_binding_str);
+    if (LineageState::debug)
+      for (auto &binding : child_bindings) { child_binding_str += binding.ToString() + " "; }
+    LDEBUG("child binding:  "+ child_binding_str);
     return child_bindings;
   }
   
@@ -148,8 +150,8 @@ void LogicalLineageOperator::RewriteDelimJoin(
                                                    // COULD SWITCH TO NORMAL JOIN. TODO: verify
     // this only wraps a regular join where one of its inputs is duplicate
     // eliminated using distinct
-    LDebug("######## delim #########\n" + delim.ToString());
-    LDebug("######## delim distinct pre #########\n" + delim.children.back().get().ToString());
+    LDEBUG("######## delim #########\n", delim.ToString());
+    LDEBUG("######## delim distinct pre #########\n", delim.children.back().get().ToString());
 
     // right or left delim join, both place the duplicate eliminated child as the last one
     // we maintain the guarantee that the last column is an annotation column
@@ -180,7 +182,7 @@ void LogicalLineageOperator::RewriteDelimJoin(
           delim.distinct.grouped_aggregate_data, delim.distinct.distinct_collection_info);
     }
     
-    LDebug("######## delim distinct post #########\n" + delim.children.back().get().ToString());
+    LDEBUG("######## delim distinct post #########\n", delim.children.back().get().ToString());
 }
 
 string LogicalLineageOperator::ExtractJoinType() {

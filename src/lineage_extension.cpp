@@ -61,10 +61,8 @@ inline void PragmaPrepareLineage(ClientContext &context, const FunctionParameter
 	int qid = parameters.values[0].GetValue<int>();
   // root logical operator id for this query
   idx_t root_id = LineageState::qid_plans_roots[qid]; // TODO: handle cases where qid not valid
-  if (LineageState::debug) 
-    std::cout << "PRAGMA PrepapreLineage: " << qid << " " << root_id << 
-    " " << EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][root_id]->type)
-    << std::endl;
+  LDEBUG("PRAGMA PrepapreLineage: ", qid, " ", root_id,
+    " ", EnumUtil::ToChars<LogicalOperatorType>(LineageState::qid_plans[qid][root_id]->type));
   InitGlobalLineageBuff(context, qid, root_id);
   vector<JoinAggBlocks>& lineage_blocks = LineageState::lineage_blocks[qid];
   lineage_blocks.emplace_back();
