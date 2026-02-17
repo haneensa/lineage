@@ -5,6 +5,7 @@
 namespace duckdb {
 
 struct BlockReaderBindData : public TableFunctionData {
+  idx_t qid;
   idx_t offset = 0;
 };
 

@@ -129,7 +129,7 @@ OperatorResultType PhysicalLineageOperator::Execute(ExecutionContext &context,
     if (LineageState::debug) {
       auto input_types = input.GetTypes();
       auto chunk_types = chunk.GetTypes();
-      LDebug( StringUtil::Format("opid: {}, |input|: {}, |columns|: {}, \ninput.types: {}\nchunk.types: {}",
+      LDebug( StringUtil::Format("opid: %d, |input|: %d, |columns|: %d, \ninput.types: %s \nchunk.types: %s",
             operator_id, input.size(), input.ColumnCount(),
             TypesToString(input_types), TypesToString(chunk_types)) );
     }

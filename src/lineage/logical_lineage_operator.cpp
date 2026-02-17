@@ -33,13 +33,13 @@ void LogicalLineageOperator::ApplyMarkJoinRewrite() {
 }
 
 void LogicalLineageOperator::ApplyJoinRewrite() {
-  auto& join = children[0]->Cast<LogicalJoin>();
-  LDebug( StringUtil::Format("Child[0] types with left_rid: {} {}",
+  LDebug( StringUtil::Format("Child[0] types with left_rid: %d %s",
         left_rid,TypesToString(children[0]->children[0]->types)) );
-  LDebug( StringUtil::Format("Child[1] types with right_rid: {} {}",
+  LDebug( StringUtil::Format("Child[1] types with right_rid: %d %s",
         left_rid,TypesToString(children[0]->children[1]->types)) );
   
-  if (this->IsSemiOrAnti(join)) {
+  if (dependent_type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN &&
+      this->IsSemiOrAnti( children[0]->Cast<LogicalJoin>() )) {
     return;
   }
   types.erase(types.begin() + left_rid);
@@ -63,7 +63,7 @@ void LogicalLineageOperator::HandleOperatorSpecificAdjustments() {
         return;
     }
 
-    if (IsJoin()) {
+    if (source_count == 2) {
         ApplyJoinRewrite();
         return;
     }
@@ -121,26 +121,19 @@ vector<ColumnBinding> LogicalLineageOperator::GetColumnBindings() {
     // get bindings of child
     string child_binding_str = "";
     for (auto &binding : child_bindings) { child_binding_str += binding.ToString() + " "; }
-    LDebug(StringUtil::Format("child binding: {}", child_binding_str) );
+    LDebug("child binding:  "+ child_binding_str);
     return child_bindings;
   }
   
-  if (this->IsJoin()) {
+  if (source_count == 2) {
+      if (this->IsJoin()) {
         auto& join = children[0]->Cast<LogicalJoin>();
-      //  std::cout << "join left: " << std::endl;
-      //  for (auto &binding : join.children[0]->GetColumnBindings()) { std::cout << binding.ToString() << " "; }
-      //  std::cout << "\n";
-      //  std::cout << "join right: " << std::endl;
-      //  for (auto &binding : join.children[1]->GetColumnBindings()) { std::cout << binding.ToString() << " "; }
-      //  std::cout << "\n";
-      if (join.join_type == JoinType::SEMI || join.join_type == JoinType::ANTI
-       || join.join_type == JoinType::RIGHT_SEMI || join.join_type == JoinType::RIGHT_ANTI) {
-        return child_bindings;
+        if (join.join_type == JoinType::SEMI || join.join_type == JoinType::ANTI
+         || join.join_type == JoinType::RIGHT_SEMI || join.join_type == JoinType::RIGHT_ANTI) {
+          return child_bindings;
+        }
       }
       child_bindings.erase(child_bindings.begin() + left_rid);
-    //  std::cout << "-> join binding: " << left_rid << " " << child_bindings.size() << " " << types.size() << std::endl;
-    //  for (auto &binding : child_bindings) { std::cout << binding.ToString() << " ";}
-    //  std::cout << "\n<- ";
   } 
   return child_bindings;
 }

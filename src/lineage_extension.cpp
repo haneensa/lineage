@@ -110,9 +110,9 @@ void LineageExtension::Load(DuckDB &db) {
         LineageMetaFunction::Bind);
     ExtensionUtil::RegisterFunction(db_instance, pragma_func);
     
-    TableFunction pragma_func_block("read_block", {LogicalType::INTEGER},
+    TableFunction tfunc_block("read_block", {LogicalType::INTEGER},
         BlockReaderFunction::Implementation, BlockReaderFunction::Bind);
-    ExtensionUtil::RegisterFunction(db_instance, pragma_func_block);
+    ExtensionUtil::RegisterFunction(db_instance, tfunc_block);
 
     auto debug_fun = PragmaFunction::PragmaCall("set_debug_lineage", PragmaLineageDebug, {LogicalType::BOOLEAN});
     ExtensionUtil::RegisterFunction(db_instance, debug_fun);

@@ -176,6 +176,9 @@ idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid) {
    // -------------------------------------------------
    // Join
    // -------------------------------------------------
+   case LogicalOperatorType::LOGICAL_DELIM_JOIN:
+   case LogicalOperatorType::LOGICAL_ASOF_JOIN:
+   case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
    case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
       store.clear();
       store.resize(2);

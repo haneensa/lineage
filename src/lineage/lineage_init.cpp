@@ -15,6 +15,7 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/operator/logical_cross_product.hpp"
 
 namespace duckdb {
 
@@ -229,6 +230,7 @@ idx_t HandleJoin(unique_ptr<LogicalOperator> &op,
             return HandleRegularJoin(op, rowids, query_id, cur_op_id);
     }
 }
+
 idx_t HandleGet(unique_ptr<LogicalOperator> &op) {
   // leaf node. add rowid attribute to propagate.
   auto &get = op->Cast<LogicalGet>();
@@ -303,9 +305,20 @@ idx_t HandleOperator(unique_ptr<LogicalOperator> &op,
       return HandleFilter(op, rowids);
   } case LogicalOperatorType::LOGICAL_DELIM_JOIN:
     case LogicalOperatorType::LOGICAL_ASOF_JOIN:
-    case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
     case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
       return HandleJoin(op, rowids, query_id, cur_op_id);
+  } case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:{
+    // TODO: add logic to propagte both left and right. dont materialize lineage.
+    auto &join = op->Cast<LogicalUnconditionalJoin>();
+    idx_t left_col_id = rowids[0];
+    idx_t right_col_id = rowids[1];
+    LDebug(StringUtil::Format("HandleCross: %d %d", left_col_id, right_col_id));
+    const int source_count = 2;
+    auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
+        op->type, source_count, left_col_id, right_col_id);
+    lop->AddChild(std::move(op));
+    op = std::move(lop);
+    return left_col_id + right_col_id;
   } case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
     return HandleAggregate(op, context, rowids, query_id, cur_op_id);
   } default: {}
@@ -322,11 +335,12 @@ idx_t InjectLineageOperator(unique_ptr<LogicalOperator> &op,ClientContext &conte
 
   idx_t op_id = LineageState::pointer_to_opid[(void*)op.get()];
 
-  string rowids_str = "";
-  for (int i = 0; i < rowids.size(); ++i)  rowids_str += ", " + to_string(rowids[i]);
-  LDebug( StringUtil::Format("InjectLineageOperator: type: {}, name: {}, op_id: {}, rowids:[ {} ]",
-        EnumUtil::ToChars<LogicalOperatorType>(op->type), op->GetName(), op_id, rowids_str) );
-
+  if (LineageState::debug) {
+    string rowids_str = "";
+    for (int i = 0; i < rowids.size(); ++i)  rowids_str += ", " + to_string(rowids[i]);
+    std::cout << "InjectLineageOperator: type: " << EnumUtil::ToChars<LogicalOperatorType>(op->type) <<
+          ", name: " << op->GetName() <<  " op_id: " << op_id << " rowids:[ " << rowids_str << " ]" << std::endl;
+  }
   return HandleOperator(op, context, query_id, rowids, op_id);
 }
 

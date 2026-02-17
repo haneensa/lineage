@@ -39,6 +39,8 @@ void CreateJoinAggBlocks(idx_t qid, idx_t opid,
    // Leaf scan
    // ----------------------------------------------------
    case LogicalOperatorType::LOGICAL_GET: {
+      lineage_blocks.back().n = lineage_idx.size();
+      // need to assert all sources for the block have the same size
       lineage_blocks.back().srcs_lineage[opid] = std::move(lineage_idx);
       return;
    }
@@ -59,29 +61,26 @@ void CreateJoinAggBlocks(idx_t qid, idx_t opid,
 
      vector<vector<idx_t>>& glineage = LineageState::lineage_global_store[table];
      idx_t n = lineage_idx.empty() ? glineage[0].size() : lineage_idx.size();
-     vector<idx_t> new_lineage_idx(n);
-     if (lineage_idx.empty()) {
-       for (idx_t i=0; i < n; ++i) new_lineage_idx[i] = glineage[0][i];
-     } else {
-       for (idx_t i=0; i < n; ++i) new_lineage_idx[i] = glineage[0][ lineage_idx[i] ];
-     }
 
      auto new_idx = RemapLineage(lineage_idx, glineage[0]);
      CreateJoinAggBlocks(qid, lop_info->children[0],
-                         lineage_blocks, std::move(new_idx), count);
+                         lineage_blocks, std::move(new_idx), n);
      return;
    } 
    // ----------------------------------------------------
    // Join
    // ----------------------------------------------------
+   case LogicalOperatorType::LOGICAL_DELIM_JOIN:
+   case LogicalOperatorType::LOGICAL_ASOF_JOIN:
+   case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
    case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {
      vector<vector<idx_t>>& glineage = LineageState::lineage_global_store[table];
      idx_t n = lineage_idx.empty() ? glineage[0].size() : lineage_idx.size();
      auto left_idx = RemapLineage(lineage_idx, glineage[0]);
-     CreateJoinAggBlocks(qid, lop_info->children[0], lineage_blocks, std::move(left_idx), count);
+     CreateJoinAggBlocks(qid, lop_info->children[0], lineage_blocks, std::move(left_idx), n);
      if (lop_info->children.size() == 2) {
        auto right_idx = RemapLineage(lineage_idx, glineage[1]);
-       CreateJoinAggBlocks(qid, lop_info->children[1], lineage_blocks, std::move(right_idx), count);
+       CreateJoinAggBlocks(qid, lop_info->children[1], lineage_blocks, std::move(right_idx), n);
      }
      return;
    }
@@ -110,7 +109,6 @@ void CreateJoinAggBlocks(idx_t qid, idx_t opid,
         }
        }
      }
-     lineage_blocks.back().n = new_lineage_idx.size(); // new_lineage_idx becuase top ops could filter
      CreateJoinAggBlocks(qid, lop_info->children[0], lineage_blocks, std::move(new_lineage_idx), new_lineage_idx.size());
      return;
    }
