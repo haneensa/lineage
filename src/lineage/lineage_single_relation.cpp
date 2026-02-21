@@ -33,6 +33,8 @@ void CreateJoinAggBlocks(idx_t qid, idx_t opid,
   auto &lop_info = LineageState::qid_plans[qid][opid];
   string table = to_string(qid) + "_" + to_string(opid);
 
+  LDEBUG("creaeJoinAggBlocks ", table,
+    " ", EnumUtil::ToChars<LogicalOperatorType>(lop_info->type));
   switch (lop_info->type) {
 
    // ----------------------------------------------------
@@ -109,7 +111,8 @@ void CreateJoinAggBlocks(idx_t qid, idx_t opid,
         }
        }
      }
-     CreateJoinAggBlocks(qid, lop_info->children[0], lineage_blocks, std::move(new_lineage_idx), new_lineage_idx.size());
+     idx_t cnt = new_lineage_idx.size();
+     CreateJoinAggBlocks(qid, lop_info->children[0], lineage_blocks, std::move(new_lineage_idx), cnt);
      return;
    }
    default: {}}

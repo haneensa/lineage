@@ -62,7 +62,7 @@ idx_t PartitionedLineage::fill_list_lineage(vector<vector<idx_t>>& glineage) {
   for (auto &partition : left) {
     idx_t cur = 0;
     
-    LDEBUG("|partition|: {}", partition.size());
+    LDEBUG("|partition|: ", partition.size());
     
     for (auto& entry :partition) {
       if (!entry.data || entry.count == 0) continue;
@@ -160,7 +160,7 @@ idx_t InitGlobalLineageBuff(ClientContext& context, idx_t qid, idx_t opid) {
   }
 
   LDEBUG("GetCachedLineage: ", EnumUtil::ToChars<LogicalOperatorType>(lop_info->type),
-        ", table: {}",table);
+        ", table: ",table);
 
   vector<vector<idx_t>>& store = LineageState::lineage_global_store[table];
 
