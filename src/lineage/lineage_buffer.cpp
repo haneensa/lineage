@@ -120,6 +120,7 @@ void LogListBigIntVector(Vector &vec, idx_t count, IVector &entry) {
     if (!entry.is_valid) {
         entry.validity_bytes = ValidityMask::ValidityMaskSize(count);
         entry.validity = (validity_t *)malloc(entry.validity_bytes);
+        entry.bytes += entry.validity_bytes;
         if (!entry.validity) {
             throw InternalException("LogListBigIntVector: malloc for validity failed");
         }
@@ -128,6 +129,7 @@ void LogListBigIntVector(Vector &vec, idx_t count, IVector &entry) {
 
     // Allocate one contiguous buffer for [list_entry_t[count]] + [BIGINT[total_elements]]
     entry.data = (data_ptr_t)malloc(entry_bytes + child_bytes);
+    entry.bytes += entry_bytes + child_bytes;
     if (!entry.data) {
         throw InternalException("LogListBigIntVector: malloc failed");
     }
@@ -173,6 +175,7 @@ void LogVector(Vector &vec, idx_t count, IVector &entry) {
     
     // Allocate destination buffer for data
     entry.data = (data_ptr_t)malloc(type_size * count);
+    entry.bytes += type_size * count;
     if (!entry.data) {
         throw InternalException("LogVector: malloc failed");
     }

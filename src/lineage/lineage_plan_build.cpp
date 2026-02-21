@@ -249,4 +249,26 @@ std::string serialize_to_json(idx_t qid, idx_t root) {
   return oss.str();
 }
 
+idx_t lineage_size(idx_t qid, idx_t root) {
+  auto &lop = LineageState::qid_plans[qid][root];
+  string qid_opid = to_string(qid) + "_" + to_string(root);
+  idx_t total = 0;
+  
+  
+  if (lop->materializes_lineage) {
+   if (LineageState::partitioned_store_buf.find(qid_opid) !=
+       LineageState::partitioned_store_buf.end()) {
+    total += LineageState::partitioned_store_buf[qid_opid]->size();
+   }
+  }
+  
+
+  for (size_t i = 0; i < lop->children.size(); i++) {
+    total += lineage_size(qid, lop->children[i]);
+  }
+  
+  LDEBUG(qid_opid," Lineage Size: ", total);
+  return total;
+}
+
 } // namespace duckdb

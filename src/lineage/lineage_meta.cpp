@@ -24,10 +24,14 @@ void LineageMetaFunction::Implementation(ClientContext &context, TableFunctionIn
   if (start >= count) return;
 
   output.data[0].Sequence(start, 1, limit);
+
   for (idx_t i=start; i < limit+start; i++) {
     idx_t root = LineageState::qid_plans_roots[i];
+    double size = lineage_size(i, root) / (1024.0 * 1024.0);
+    output.data[1].SetValue(i, Value(size));
+
     string plan_json = serialize_to_json(i, root);
-    output.data[1].SetValue(i, Value(plan_json));
+    output.data[2].SetValue(i, Value(plan_json));
   }
   output.SetCardinality(limit);
   bind_data.offset += limit;
@@ -40,6 +44,9 @@ unique_ptr<FunctionData> LineageMetaFunction::Bind(ClientContext &context, Table
 
   names.emplace_back("query_id");
   return_types.emplace_back(LogicalType::INTEGER);
+  
+  names.emplace_back("size_mb");
+  return_types.emplace_back(LogicalType::DOUBLE);
 
   names.emplace_back("plan");
   return_types.emplace_back(LogicalType::VARCHAR);

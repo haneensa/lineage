@@ -37,6 +37,16 @@ idx_t PartitionedLineage::get_total_count() {
   return total_count;
 }
 
+idx_t PartitionedLineage::size() {
+  idx_t size = 0;
+  for (auto &partition : left) {
+    for (auto& cnt : partition) {
+      size += cnt.bytes;
+    }
+  }
+  return size;
+}
+
 // -------------------------------------------------------------
 // LIST-based lineage (aggregates)
 // -------------------------------------------------------------

@@ -21,6 +21,8 @@ struct IVector {
     validity_t *validity = nullptr;    // bitmap of nulls (64 bits per entry, owned)
     idx_t validity_bytes;              // size in bytes of validity mask
                              
+    idx_t bytes = 0;
+
     void clear() {
       free(sel); sel = nullptr;
       free(data); data = nullptr;
@@ -48,6 +50,8 @@ struct PartitionedLineage {
   idx_t fill_list_lineage(vector<vector<idx_t>>& lineage2D);
   void fill_local(vector<vector<IVector>>& store, vector<idx_t>& lineage1D);
   idx_t get_total_count();
+  idx_t size();
+
   void clear() {
     std::lock_guard<std::mutex> lock(p_lock);
     for (auto& partition : left) {

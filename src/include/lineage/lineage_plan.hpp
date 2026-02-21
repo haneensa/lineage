@@ -35,5 +35,6 @@ struct LineageInfoNode {
 idx_t AnnotatePlan(unique_ptr<LogicalOperator> &op, idx_t query_id, idx_t& next_opid);
 void PostAnnotate(idx_t query_id, idx_t root);
 std::string serialize_to_json(idx_t qid, idx_t root);
+idx_t lineage_size(idx_t qid, idx_t root);
 
 } // namespace duckdb

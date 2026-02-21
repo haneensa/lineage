@@ -21,6 +21,7 @@ namespace duckdb {
 
 bool IsSPJUA(unique_ptr<LogicalOperator>& plan) {
   if ( (plan->type == LogicalOperatorType::LOGICAL_PROJECTION
+      || plan->type == LogicalOperatorType::LOGICAL_UNION
       || plan->type == LogicalOperatorType::LOGICAL_ORDER_BY
       || plan->type == LogicalOperatorType::LOGICAL_GET
       || plan->type == LogicalOperatorType::LOGICAL_COMPARISON_JOIN
@@ -242,6 +243,26 @@ idx_t HandleGet(unique_ptr<LogicalOperator> &op) {
   return col_id;
 }
 
+idx_t HandleUnion(unique_ptr<LogicalOperator> &op, idx_t cur_op_id, idx_t query_id,
+                  vector<idx_t>& rowids) {
+  // extract lineage from left side, and right side
+  // replace it with new rowid
+  idx_t left_col_id = rowids[0];
+  idx_t right_col_id = 0; //rowids[1];
+  LDEBUG("UNION: ",left_col_id, " ", right_col_id);
+  const int source_count = 1;
+  auto lop = make_uniq<LogicalLineageOperator>(op->estimated_cardinality, cur_op_id, query_id,
+      op->type, source_count, left_col_id, 0);
+  lop->AddChild(std::move(op));
+  op = std::move(lop);
+
+  // add lop below each child that append 0 or 1 to rowid  to indicate which source
+  // it belongs to.
+
+  // for the group by, exclude rowid from the groups, and add list aggregate
+  return left_col_id;
+}
+
 idx_t HandleOperator(unique_ptr<LogicalOperator> &op,
                      ClientContext &context,
                      idx_t query_id,
@@ -300,6 +321,8 @@ idx_t HandleOperator(unique_ptr<LogicalOperator> &op,
       return new_col_id;
     } case LogicalOperatorType::LOGICAL_FILTER: {
       return HandleFilter(op, rowids);
+  } case LogicalOperatorType::LOGICAL_UNION: {
+      return HandleUnion(op, cur_op_id, query_id, rowids);
   } case LogicalOperatorType::LOGICAL_DELIM_JOIN:
     case LogicalOperatorType::LOGICAL_ASOF_JOIN:
     case LogicalOperatorType::LOGICAL_COMPARISON_JOIN: {

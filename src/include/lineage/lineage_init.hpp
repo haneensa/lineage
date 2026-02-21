@@ -8,6 +8,7 @@
 
 namespace duckdb {
 
+
 typedef idx_t OPID;
 typedef idx_t QID;
 typedef string QID_OPID;
@@ -47,7 +48,7 @@ struct LineageState {
    static unordered_map<void*, idx_t> pointer_to_opid;
    
    static std::unordered_map<QID_OPID, vector<vector<idx_t>>> lineage_global_store;
-   static unordered_map<string, unique_ptr<PartitionedLineage>> partitioned_store_buf;
+   static unordered_map<QID_OPID, unique_ptr<PartitionedLineage>> partitioned_store_buf;
    static unordered_map<QID, vector<JoinAggBlocks>> lineage_blocks;
    
    static std::mutex g_log_lock;

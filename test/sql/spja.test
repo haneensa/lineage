@@ -54,6 +54,11 @@ SELECT t1.id, t2.id FROM t as t1, t as t2
 statement ok
 PRAGMA set_lineage(False);
 
+query III
+SELECT * FROM lineage_meta();
+----
+
+
 statement ok
 PRAGMA PrepareLineage(0);
 
@@ -65,6 +70,7 @@ PRAGMA PrepareLineage(2);
 
 statement ok
 PRAGMA PrepareLineage(3);
+
 
 query II
 SELECT output_id, opid_2_t FROM read_block(0);
